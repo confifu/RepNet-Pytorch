@@ -1,0 +1,15 @@
+Countix Dataset
+
+Data is organized as follows:
+1) countix_train.csv - Train split
+2) countix_val.csv - Validation split
+3) countix_test.csv - Test split
+
+Each csv file has the following columns:
+1) video_id - YouTube video ID.
+2) class - Kinetics action class.
+3) kinetics_start - Time in seconds when Kinetics clip starts.
+4) kinetics_end - Time in seconds when Kinetics clip ends.
+5) repetition_start - Time in seconds when repetitions begin in the video.
+6) repetition_end - Time in seconds when repetitions end in the video.
+7) count - The number of times the action was repeated in the video.
