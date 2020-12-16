@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 import pandas as pd
-import ffmpeg
 from PIL import Image
 from torchvision import transforms
 import cv2, youtube_dl, subprocess
