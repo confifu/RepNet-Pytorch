@@ -135,11 +135,12 @@ class CountixDataset(Dataset):
             os.remove(path_to_video)
 
         toDelete = len(frames) - 64
-        period = len(frames)//toDelete
-        for i in range(0, toDelete):
-            del frames[len(frames) - 1 - i*period]
-        
-        #print("length after maneuver", len(frames))    
+        if toDelete > 0:
+            period = len(frames)//toDelete
+            for i in range(0, toDelete):
+                del frames[len(frames) - 1 - i*period]
+
+            #print("length after maneuver", len(frames))    
             
         frames = frames[:self.framesPerVid]
         frames = torch.cat(frames)
