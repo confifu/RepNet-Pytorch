@@ -83,18 +83,16 @@ class RepNet(nn.Module):
         self.bn1 = nn.BatchNorm3d(512)
         #get_sims
         
-        self.conv3x3 = nn.Sequential(        
-                            nn.Conv2d(in_channels = 1,
-                                     out_channels = 32,                  
-                                     kernel_size = 3,
-                                     padding = 1),
-                            nn.Conv2d(in_channels = 32,
-                                     out_channels = 512,                  
-                                     kernel_size = 3,
-                                     padding = 1)
-                                    )
+        self.conv3x3 = nn.Conv2d(in_channels = 1,
+                                 out_channels = 32,                  
+                                 kernel_size = 3,
+                                 padding = 1)
+        
+        #reshape from (batch, 32, frame, frame) to  (batch, frame, (frame * 32))
+        
         
         #period length prediction
+        self.input_projection1 = nn.Linear(self.num_frames * 32, 512)
         self.pos_encoder1 = PositionalEncoding(512, 0.1)
         self.trans_encoder1 = nn.TransformerEncoderLayer(d_model = 512,           
                                                     nhead = 4,
@@ -102,17 +100,18 @@ class RepNet(nn.Module):
                                                     dropout = 0.1,
                                                     activation = 'relu')
         
-        self.fc1_1 = nn.Linear(self.num_frames * 512, 512)
+        self.fc1_1 = nn.Linear(512, 512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
 
         #periodicity prediction
+        self.input_projection2 = nn.Linear(self.num_frames * 32, 512) 
         self.pos_encoder2 = PositionalEncoding(512, 0.1)
         self.trans_encoder2 =  nn.TransformerEncoderLayer(d_model = 512,           
                                                         nhead = 4,
                                                         dim_feedforward = 512,            
                                                         dropout = 0.1,
                                                         activation = 'relu')
-        self.fc2_1 = nn.Linear(self.num_frames * 512, 512)
+        self.fc2_1 = nn.Linear(512, 512)
         self.fc2_2 = nn.Linear(512, 1)
 
     def forward(self, x):
@@ -129,27 +128,27 @@ class RepNet(nn.Module):
         final_embs = x
         x = torch.transpose(x, 1, 2)
         x = get_sims(x)
-        x = F.relu(self.conv3x3(x))                #batch, d_model, num_frame, num_frame
-        x = torch.transpose(x, 1, 3)               #batch, num_frame, num_frame, d_model
-        x = torch.transpose(x, 0, 1)               #num_frame, batch, num_frame, d_model
-        x = torch.reshape(x, (self.num_frames, -1, 512))
+        x = F.relu(self.conv3x3(x))                #batch, 32, num_frame, num_frame
+        x = torch.transpose(x, 1, 2)               #batch, num_frame, 32, num_frame
+        x = torch.reshape(x, (batch_size, self.num_frames, -1))               #batch, num_frame, 32*num_frame
         
-        x1 = self.pos_encoder1(x)
+        x1 = self.input_projection1(x)                          #batch, num_frame, d_model=512
+        x1 = self.pos_encoder1(x1)
+        
+        x1 = torch.transpose(x1, 0, 1)
         x1 = self.trans_encoder1(x1)
-        
-        x1 = torch.reshape(x1, (self.num_frames, batch_size, self.num_frames, 512))
-        x1 = torch.reshape(x1, (self.num_frames, batch_size, -1))
         x1 = torch.transpose(x1, 0, 1)
         
+        print(x1.shape)
         y1 = F.relu(self.fc1_1(x1))
         y1 = F.relu(self.fc1_2(y1))
         y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
         
-        x2 = self.pos_encoder2(x)
-        x2 = self.trans_encoder2(x2)
+        x2 = self.input_projection2(x)
+        x2 = self.pos_encoder2(x2)
         
-        x2 = torch.reshape(x2, (self.num_frames, batch_size, self.num_frames, 512))
-        x2 = torch.reshape(x2, (self.num_frames, batch_size, -1))
+        x2 = torch.transpose(x2, 0, 1)
+        x2 = self.trans_encoder2(x2)
         x2 = torch.transpose(x2, 0, 1)
         
         y2 = F.relu(self.fc2_1(x2))
