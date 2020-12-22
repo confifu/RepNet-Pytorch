@@ -3,65 +3,73 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 from torchvision import transforms
-import cv2, youtube_dl, subprocess
-import math, base64, io, os, time, cv2
+
+import cv2
+import math, base64, io, os, time
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 class CountixDataset(Dataset):
     
-    def __init__(self, df_path, framesPerVid):
+    def __init__(self, df_path, videoPath, filenamePrefix, framesPerVid):
+        
+        self.framesPerVid = framesPerVid        
         self.df = pd.read_csv(df_path)
-        self.df= self.df.sort_values(by=['video_id',
+        self.path_prefix = videoPath + '/' + filenamePrefix
+        
+        files_present = []
+        for i in range(0, len(self.df)):
+            path_to_video = self.path_prefix + str(i) + '.mp4'
+            if os.path.exists(path_to_video):
+                files_present.append(i)
+
+        self.df = self.df.iloc[files_present]
+        self.df = self.df.sort_values(by=['video_id',
                                          'repetition_start',
                                          'repetition_end'])
-        self.framesPerVid = framesPerVid
+        self.df = self.df.reset_index()
+
 
     def __getitem__(self, index):
 
-        try :
-            id = self.df.loc[index, 'video_id']
-            start = self.df.loc[index, 'repetition_start']
-            end = self.df.loc[index, 'repetition_end']
-            count = self.df.loc[index, 'count']
-            X, newStart, newEnd = self.generateRepVid(start,end,id,index)
+        X= self.generateRepVid(index)
+        newStart, newEnd = self.getNewRange(index)
         
-        except:
-            index = 0
-            id = self.df.loc[index, 'video_id']
-            start = self.df.loc[index, 'repetition_start']
-            end = self.df.loc[index, 'repetition_end']
-            count = self.df.loc[index, 'count']
-            
-            X, newStart, newEnd = self.generateRepVid(start,end,id,index)
+        id = self.df.loc[index, 'video_id']
+        count = self.df.loc[index, 'count']
+        start = self.df.loc[index, 'repetition_start']
+        end = self.df.loc[index, 'repetition_end']
         
         durationScaleFac = (newEnd-newStart)/self.framesPerVid
         repStartFrame = int((start- newStart)/durationScaleFac)
         repEndFrame = int((end - newStart)/durationScaleFac)
         
+     
+        #print(start, end, newStart, newEnd, repEndFrame, repStartFrame, count, id)
         periodLength = np.zeros((self.framesPerVid))
         for i in range(self.framesPerVid):
-            if repStartFrame< i <repEndFrame:
-                periodLength[i] = (repEndFrame-repStartFrame)/count
+            if repStartFrame < i < repEndFrame:
+                periodLength[i] = max(0, (repEndFrame-repStartFrame)//count - 1)      #this would mean the predicted+1 is length
                 
         periodicity = np.zeros((self.framesPerVid,1)) 
         for i in range(self.framesPerVid):
-            if repStartFrame< i <repEndFrame:
+            if repStartFrame < i < repEndFrame:
                 periodicity[i] = True
 
 
         periodLength = torch.LongTensor(periodLength)
         periodicity = torch.FloatTensor(periodicity)
         return X, periodLength, periodicity
-
-    def generateRepVid(self, start, end, id, index):
-
-        newStart =  -1      
-        if self.df.loc[max(0,index-1), 'video_id']== self.df.loc[index, 'video_id']:
-            if int(self.df.loc[max(0,index-1), 'repetition_end']) == int(self.df.loc[index, 'repetition_start']):
-                newStart=self.df.loc[max(0,index-1), 'repetition_end']
+    
+    def getNewRange(self, index):
+        start = self.df.loc[index, 'repetition_start']
+        end = self.df.loc[index, 'repetition_end']
+        newStart =  -1
+        if index - 1 >= 0 and self.df.loc[index-1, 'video_id'] == self.df.loc[index, 'video_id']:
+            if int(self.df.loc[index-1, 'repetition_end']) == int(self.df.loc[index, 'repetition_start']):
+                newStart=self.df.loc[index-1, 'repetition_end']
 
         newStart = max([start - 0.5,
-                    newStart,
+                    (newStart if newStart < start else start),
                     self.df.loc[index, 'kinetics_start']])
 
         newEnd = np.inf   
@@ -70,46 +78,17 @@ class CountixDataset(Dataset):
                 newEnd=self.df.loc[min(len(self)-1,index+1), 'repetition_start']
 
         newEnd = min([end  + 0.5,
-                      newEnd,
+                      (newEnd if newEnd > end else end),
                       self.df.loc[index, 'kinetics_end']])
-
-        url = 'https://www.youtube.com/watch?v='+id
-        path_to_video = 'videodump/video_to_train'+str(index)+'.mp4'
-        #fps = self.framesPerVid/(newEnd-newStart) + 1
-        #print("start and end time", newStart, newEnd, id)
         
-        if os.path.exists(path_to_video):
-            os.remove(path_to_video)
+        return newStart, newEnd
 
-        opts = {'format': 'worst',
-                'quiet':True,
-                }
-        
-        while(True):
-            with youtube_dl.YoutubeDL(opts) as ydl:
-                result=ydl.extract_info(url, download=False)
-                video=result['entries'][0] if 'entries' in result else result
+    def generateRepVid(self, index):
 
-            url = video['url']
-            '''
-            vid = ffmpeg.probe(url)
-            i = vid['streams'][0]
-            '''
-            origDur = (end - start)
-            fps = 64/origDur     
-            #print("fps is ", fps)
-            
-            subprocess.call('ffmpeg -i "%s" -ss %s -to %s -r %s -an "%s"' % 
-                                        (url, newStart, newEnd, fps, path_to_video), shell=True)
-
-            if os.path.exists(path_to_video):
-                break
-        
-        #path_to_video = newPath
-        assert os.path.exists(path_to_video), "Video file does not exist"
+        path_to_video = self.path_prefix + str(self.df.loc[index, 'index'])+'.mp4'
+        assert os.path.exists(path_to_video), "Video file does not exist"+path_to_video
             
         frames = []
-
         cap = cv2.VideoCapture(path_to_video)
         while cap.isOpened():
             ret, frame = cap.read()
@@ -126,25 +105,14 @@ class CountixDataset(Dataset):
             frames.append(frameTensor)
 
         cap.release()
-        #print("in cv loop", len(frames))
+        assert len(frames) >= self.framesPerVid, "Frames not enough"
+        newFrames = []
+        for i in range(1, self.framesPerVid + 1):
+            newFrames.append(frames[i * len(frames)//self.framesPerVid  - 1])
         
-        assert len(frames) >= 64, "frames do not exist"
-        #print("number of frames are :", len(frames))
-        
-        if os.path.exists(path_to_video):
-            os.remove(path_to_video)
-
-        toDelete = len(frames) - 64
-        if toDelete > 0:
-            period = len(frames)//toDelete
-            for i in range(0, toDelete):
-                del frames[len(frames) - 1 - i*period]
-
-            #print("length after maneuver", len(frames))    
-            
-        frames = frames[:self.framesPerVid]
-        frames = torch.cat(frames)
-        return frames, newStart, newEnd
+        assert len(newFrames) == self.framesPerVid, "Uniform frame pruning technique failed"
+        frames = torch.cat(newFrames)
+        return frames
 
     def __len__(self):
         return len(self.df)
