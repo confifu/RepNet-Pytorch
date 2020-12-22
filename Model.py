@@ -91,9 +91,14 @@ class RepNet(nn.Module):
         #reshape from (batch, 32, frame, frame) to  (batch, frame, (frame * 32))
         
         
+        
+        from torch.distributions import normal
+        m = normal.Normal(0.0, 0.02)
         #period length prediction
+        
         self.input_projection1 = nn.Linear(self.num_frames * 32, 512)
-        self.pos_encoder1 = PositionalEncoding(512, 0.1)
+        self.pos_encoder1 = nn.Parameter(m.sample([1, self.num_frames, 1]))
+        #self.pos_encoder1 = PositionalEncoding(512, 0.1)
         self.trans_encoder1 = nn.TransformerEncoderLayer(d_model = 512,           
                                                     nhead = 4,
                                                     dim_feedforward = 512,            
@@ -104,8 +109,9 @@ class RepNet(nn.Module):
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
 
         #periodicity prediction
-        self.input_projection2 = nn.Linear(self.num_frames * 32, 512) 
-        self.pos_encoder2 = PositionalEncoding(512, 0.1)
+        self.input_projection2 = nn.Linear(self.num_frames * 32, 512)
+        self.pos_encoder2 = nn.Parameter(m.sample([1, self.num_frames, 1]))
+        #self.pos_encoder2 = PositionalEncoding(512, 0.1)
         self.trans_encoder2 =  nn.TransformerEncoderLayer(d_model = 512,           
                                                         nhead = 4,
                                                         dim_feedforward = 512,            
@@ -133,19 +139,18 @@ class RepNet(nn.Module):
         x = torch.reshape(x, (batch_size, self.num_frames, -1))               #batch, num_frame, 32*num_frame
         
         x1 = self.input_projection1(x)                          #batch, num_frame, d_model=512
-        x1 = self.pos_encoder1(x1)
+        x1 += self.pos_encoder1
         
         x1 = torch.transpose(x1, 0, 1)
         x1 = self.trans_encoder1(x1)
         x1 = torch.transpose(x1, 0, 1)
         
-        print(x1.shape)
         y1 = F.relu(self.fc1_1(x1))
         y1 = F.relu(self.fc1_2(y1))
         y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
         
         x2 = self.input_projection2(x)
-        x2 = self.pos_encoder2(x2)
+        x2 += self.pos_encoder2
         
         x2 = torch.transpose(x2, 0, 1)
         x2 = self.trans_encoder2(x2)
