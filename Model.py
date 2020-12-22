@@ -6,24 +6,19 @@ import math, base64, io, os, time, cv2
 import numpy as np
 
 #=============functions================
-use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:0" if use_cuda else "cpu")
 
-def pairwise_l2_distance(a, b):
-  """Computes pairwise distances between all rows of a and b."""
-  norm_a = torch.sum(torch.square(a), 1)
-  norm_a = torch.reshape(norm_a, (-1, 1))
-  norm_b = torch.sum(torch.square(b), 1)
-  norm_b = torch.reshape(norm_b, (1, -1))
-  dist = torch.maximum(norm_a - 2.0 * torch.matmul(a,torch.transpose(b,0,1)) + norm_b, torch.tensor(0.0).to(device))
-  return dist
+def sim_matrix(a, b, eps=1e-8):
+    a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
+    a_norm = a / torch.max(a_n, eps * torch.ones_like(a_n))
+    b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
+    sim_mt = torch.mm(a_norm, b_norm.transpose(0, 1))
+    return sim_mt
 
 '''returns 1*num_frame*num_frame'''
 def _get_sims(embs):
     """Calculates self-similarity between sequence of embeddings."""
-    dist = pairwise_l2_distance(embs, embs)
-    sims = -1.0 * dist
-    sims = sims.unsqueeze(0)
+    dist = sim_matrix(embs, embs)
+    sims = dist.unsqueeze(0)
     return sims
 
 def get_sims(embs, temperature = 13.544):
@@ -81,45 +76,50 @@ class RepNet(nn.Module):
         
 
         self.Conv3D = nn.Conv3d(in_channels = 1024,
-                                out_channels = 512,               #changing to 256 from 512
+                                out_channels = 512,
                                 kernel_size = 3,
                                 padding = 3,
                                 dilation = 3)
         self.bn1 = nn.BatchNorm3d(512)
         #get_sims
         
-        self.conv3x3_1 = nn.Conv2d(in_channels = 1,
-                                 out_channels = 32,                    #changing to 16 from 32
-                                 kernel_size = 3,
-                                 padding = 1)
+        self.conv3x3 = nn.Sequential(        
+                            nn.Conv2d(in_channels = 1,
+                                     out_channels = 32,                  
+                                     kernel_size = 3,
+                                     padding = 1),
+                            nn.Conv2d(in_channels = 32,
+                                     out_channels = 512,                  
+                                     kernel_size = 3,
+                                     padding = 1)
+                                    )
         
-        self.conv3x3_2 = nn.Conv2d(in_channels = 32,
-                                 out_channels = 512,                      #changing to 256 from 512
-                                 kernel_size = 3,
-                                 padding = 1)
-        self.pos_encoder = PositionalEncoding(512, 0.1)                           #do
-        trans_encoder_layer = nn.TransformerEncoderLayer(d_model = 512,           #do
-                                                nhead = 4,
-                                                dim_feedforward = 512,            #do
-                                                dropout = 0.1,
-                                                activation = 'relu')
-        self.trans_encoder=nn.TransformerEncoder(trans_encoder_layer,1)
-
-        #fc layers
         #period length prediction
-        self.fc1_1 = nn.Linear(self.num_frames*512, 512)                             #do
-        self.fc1_2 = nn.Linear(512, self.num_frames//2)                              #do
+        self.pos_encoder1 = PositionalEncoding(512, 0.1)
+        self.trans_encoder1 = nn.TransformerEncoderLayer(d_model = 512,           
+                                                    nhead = 4,
+                                                    dim_feedforward = 512,            
+                                                    dropout = 0.1,
+                                                    activation = 'relu')
         
-        #periodicity module
-        self.fc2_1 = nn.Linear(self.num_frames*512, 512)                              #do
-        self.fc2_2 = nn.Linear(512, 1)                                                #do
+        self.fc1_1 = nn.Linear(self.num_frames * 512, 512)
+        self.fc1_2 = nn.Linear(512, self.num_frames//2)
+
+        #periodicity prediction
+        self.pos_encoder2 = PositionalEncoding(512, 0.1)
+        self.trans_encoder2 =  nn.TransformerEncoderLayer(d_model = 512,           
+                                                        nhead = 4,
+                                                        dim_feedforward = 512,            
+                                                        dropout = 0.1,
+                                                        activation = 'relu')
+        self.fc2_1 = nn.Linear(self.num_frames * 512, 512)
+        self.fc2_2 = nn.Linear(512, 1)
 
     def forward(self, x):
         batch_size = x.shape[0]
         x = torch.reshape(x, (-1, 3, x.shape[3], x.shape[4]))
         x = self.resnetBase(x)
-        x = torch.reshape(x, 
-                    (batch_size,-1,x.shape[1],x.shape[2],x.shape[3]))
+        x = torch.reshape(x, (batch_size,-1,x.shape[1],x.shape[2],x.shape[3]))
         x = torch.transpose(x, 1, 2)
         x = self.Conv3D(x)
         x = self.bn1(x)
@@ -127,21 +127,31 @@ class RepNet(nn.Module):
         x,_ = torch.max(x, 3)
         
         final_embs = x
-        
         x = torch.transpose(x, 1, 2)
         x = get_sims(x)
-        x = F.relu(self.conv3x3_1(x))
-        x = F.relu(self.conv3x3_2(x))
-        x = torch.reshape(x, (batch_size, 512, -1))                                       #do
-        x = torch.transpose(x, 1, 2)
-        x = self.pos_encoder(x)
-        x = self.trans_encoder(x)
-        x = torch.reshape(x, (x.shape[0],self.num_frames, -1))
+        x = F.relu(self.conv3x3(x))                #batch, d_model, num_frame, num_frame
+        x = torch.transpose(x, 1, 3)               #batch, num_frame, num_frame, d_model
+        x = torch.transpose(x, 0, 1)               #num_frame, batch, num_frame, d_model
+        x = torch.reshape(x, (self.num_frames, -1, 512))
         
-        y1 = F.relu(self.fc1_1(x))
+        x1 = self.pos_encoder1(x)
+        x1 = self.trans_encoder1(x1)
+        
+        x1 = torch.reshape(x1, (self.num_frames, batch_size, self.num_frames, 512))
+        x1 = torch.reshape(x1, (self.num_frames, batch_size, -1))
+        x1 = torch.transpose(x1, 0, 1)
+        
+        y1 = F.relu(self.fc1_1(x1))
         y1 = F.relu(self.fc1_2(y1))
         y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
-
-        y2 = F.relu(self.fc2_1(x))
+        
+        x2 = self.pos_encoder2(x)
+        x2 = self.trans_encoder2(x2)
+        
+        x2 = torch.reshape(x2, (self.num_frames, batch_size, self.num_frames, 512))
+        x2 = torch.reshape(x2, (self.num_frames, batch_size, -1))
+        x2 = torch.transpose(x2, 0, 1)
+        
+        y2 = F.relu(self.fc2_1(x2))
         y2 = F.relu(self.fc2_2(y2))
         return y1, y2, final_embs
