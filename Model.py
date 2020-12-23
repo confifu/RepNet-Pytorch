@@ -53,12 +53,12 @@ def get_sims(embs, temperature = 13.544):
 class ResNet50Bottom(nn.Module):
     def __init__(self, original_model):
         super(ResNet50Bottom, self).__init__()
-        self.rnet=nn.Sequential(*list(original_model.children())[:-3])
-        #self.left=nn.Sequential(*list(original_model.children())[-4][:3])
+        self.rnet=nn.Sequential(*list(original_model.children())[:-4])
+        self.left=nn.Sequential(*list(original_model.children())[-4][:3])
         
     def forward(self, x):
         x = self.rnet(x)
-        #x = self.left(x)
+        x = self.left(x)
         return x
 
 class PositionalEncoding(nn.Module):
@@ -85,11 +85,11 @@ class RepNet(nn.Module):
     def __init__(self, num_frames):
         super(RepNet, self).__init__()
         self.num_frames = num_frames
-        resnetbase = torchvision.models.resnet50(pretrained=True, progress=True)
+        resnetbase = torchvision.models.resnet50(pretrained=False, progress=True)
         self.resnetBase = ResNet50Bottom(resnetbase)
         
 
-        self.Conv3D = nn.Conv3d(in_channels = 1024,
+        self.conv3D = nn.Conv3d(in_channels = 1024,
                                 out_channels = 512,
                                 kernel_size = 3,
                                 padding = 3,
@@ -116,7 +116,7 @@ class RepNet(nn.Module):
         self.trans_encoder1 = nn.TransformerEncoderLayer(d_model = 512,           
                                                     nhead = 4,
                                                     dim_feedforward = 512,            
-                                                    dropout = 0.1,
+                                                    dropout = 0,
                                                     activation = 'relu')
         
         self.fc1_1 = nn.Linear(512, 512)
@@ -140,7 +140,7 @@ class RepNet(nn.Module):
         x = self.resnetBase(x)
         x = torch.reshape(x, (batch_size,-1,x.shape[1],x.shape[2],x.shape[3]))
         x = torch.transpose(x, 1, 2)
-        x = self.Conv3D(x)
+        x = F.relu(self.conv3D(x))
         x = self.bn1(x)
         x,_ = torch.max(x, 4)
         x,_ = torch.max(x, 3)
@@ -152,7 +152,7 @@ class RepNet(nn.Module):
         x = torch.transpose(x, 1, 2)               #batch, num_frame, 32, num_frame
         x = torch.reshape(x, (batch_size, self.num_frames, -1))               #batch, num_frame, 32*num_frame
         
-        x1 = self.input_projection1(x)                          #batch, num_frame, d_model=512
+        x1 = F.relu(self.input_projection1(x))                          #batch, num_frame, d_model=512
         x1 += self.pos_encoder1
         
         x1 = torch.transpose(x1, 0, 1)
@@ -163,7 +163,7 @@ class RepNet(nn.Module):
         y1 = F.relu(self.fc1_2(y1))
         y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
         
-        x2 = self.input_projection2(x)
+        x2 = F.relu(self.input_projection2(x))
         x2 += self.pos_encoder2
         
         x2 = torch.transpose(x2, 0, 1)
