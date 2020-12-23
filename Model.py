@@ -14,10 +14,24 @@ def sim_matrix(a, b, eps=1e-8):
     sim_mt = torch.mm(a_norm, b_norm.transpose(0, 1))
     return sim_mt
 
+
+def pairwise_l2_distance(a, b):
+  """Computes pairwise distances between all rows of a and all rows of b."""
+  norm_a = torch.sum(torch.square(a), 1)
+  norm_a = torch.reshape(norm_a, [-1, 1])
+  norm_b = torch.sum(torch.square(b), 1)
+  norm_b = torch.reshape(norm_b, [1, -1])
+  dist = norm_a - 2.0 * torch.mm(a, b.transpose(0,1)) + norm_b
+  dist[dist < 0] = 0
+  dist = -1 * dist
+  return dist
+
+
 '''returns 1*num_frame*num_frame'''
 def _get_sims(embs):
     """Calculates self-similarity between sequence of embeddings."""
-    dist = sim_matrix(embs, embs)
+    dist = pairwise_l2_distance(embs, embs)
+    #dist = sim_matrix(embs, embs)
     sims = dist.unsqueeze(0)
     return sims
 
@@ -39,12 +53,12 @@ def get_sims(embs, temperature = 13.544):
 class ResNet50Bottom(nn.Module):
     def __init__(self, original_model):
         super(ResNet50Bottom, self).__init__()
-        self.rnet=nn.Sequential(*list(original_model.children())[:-4])
-        self.left=nn.Sequential(*list(original_model.children())[-4][:3])
+        self.rnet=nn.Sequential(*list(original_model.children())[:-3])
+        #self.left=nn.Sequential(*list(original_model.children())[-4][:3])
         
     def forward(self, x):
         x = self.rnet(x)
-        x = self.left(x)
+        #x = self.left(x)
         return x
 
 class PositionalEncoding(nn.Module):
