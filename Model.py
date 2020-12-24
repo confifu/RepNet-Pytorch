@@ -143,7 +143,6 @@ class RepNet(nn.Module):
         x = F.relu(self.conv3D(x))
         x = self.bn1(x)
         x,_ = torch.max(x, 4)
-        x,_ = torch.max(x, 3)
         
         final_embs = x
         x = torch.transpose(x, 1, 2)
