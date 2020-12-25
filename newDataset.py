@@ -118,7 +118,7 @@ class SyntheticDataset(Dataset):
     
     def __init__(self, videoPath, filename, length):
         
-        self.sourcePath = videoPath + '/' + filename + '.mp4'
+        self.sourcePath = videoPath + '/' + filename
         self.length = length
 
     def __getitem__(self, index):
