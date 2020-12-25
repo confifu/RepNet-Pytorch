@@ -5,6 +5,12 @@ import torch.nn.functional as F
 import math, base64, io, os, time, cv2
 import numpy as np
 
+#============metrics ==================
+def MAE(ypred, y) :
+    batch_size = y.shape[0]
+    
+    
+    return mae
 #=============functions================
 
 def sim_matrix(a, b, eps=1e-8):
@@ -85,7 +91,7 @@ class RepNet(nn.Module):
     def __init__(self, num_frames):
         super(RepNet, self).__init__()
         self.num_frames = num_frames
-        resnetbase = torchvision.models.resnet50(pretrained=False, progress=True)
+        resnetbase = torchvision.models.resnet50(pretrained=True, progress=True)
         self.resnetBase = ResNet50Bottom(resnetbase)
         
 
@@ -116,11 +122,12 @@ class RepNet(nn.Module):
         self.trans_encoder1 = nn.TransformerEncoderLayer(d_model = 512,           
                                                     nhead = 4,
                                                     dim_feedforward = 512,            
-                                                    dropout = 0,
+                                                    dropout = 0.1,
                                                     activation = 'relu')
         
-        self.fc1_1 = nn.Linear(512, 512)
-        self.fc1_2 = nn.Linear(512, self.num_frames//2)
+        self.fc1_1 = nn.Linear(512, 256)
+        self.fc1_2 = nn.Linear(256, 1)
+        self.fc1_3 = nn.Linear(self.num_frames, 1)
 
         #periodicity prediction
         self.input_projection2 = nn.Linear(self.num_frames * 32, 512)
@@ -131,8 +138,8 @@ class RepNet(nn.Module):
                                                         dim_feedforward = 512,            
                                                         dropout = 0.1,
                                                         activation = 'relu')
-        self.fc2_1 = nn.Linear(512, 512)
-        self.fc2_2 = nn.Linear(512, 1)
+        self.fc2_1 = nn.Linear(512, 256)
+        self.fc2_2 = nn.Linear(256, 1)
 
     def forward(self, x):
         batch_size = x.shape[0]
@@ -140,18 +147,19 @@ class RepNet(nn.Module):
         x = self.resnetBase(x)
         x = torch.reshape(x, (batch_size,-1,x.shape[1],x.shape[2],x.shape[3]))
         x = torch.transpose(x, 1, 2)
-        x = F.relu(self.conv3D(x))
-        x = self.bn1(x)
+        x = self.conv3D(x)
+        x = F.relu(self.bn1(x))
         x,_ = torch.max(x, 4)
+        x,_ = torch.max(x, 3)
         
         final_embs = x
         x = torch.transpose(x, 1, 2)
         x = get_sims(x)
-        x = F.relu(self.conv3x3(x))                #batch, 32, num_frame, num_frame
-        x = torch.transpose(x, 1, 2)               #batch, num_frame, 32, num_frame
-        x = torch.reshape(x, (batch_size, self.num_frames, -1))               #batch, num_frame, 32*num_frame
+        x = F.relu(self.conv3x3(x))                                 #batch, 32, num_frame, num_frame
+        x = torch.transpose(x, 1, 2)                                #batch, num_frame, 32, num_frame
+        x = torch.reshape(x, (batch_size, self.num_frames, -1))     #batch, num_frame, 32*num_frame
         
-        x1 = F.relu(self.input_projection1(x))                          #batch, num_frame, d_model=512
+        x1 = F.relu(self.input_projection1(x))                      #batch, num_frame, d_model=512
         x1 += self.pos_encoder1
         
         x1 = torch.transpose(x1, 0, 1)
@@ -160,7 +168,10 @@ class RepNet(nn.Module):
         
         y1 = F.relu(self.fc1_1(x1))
         y1 = F.relu(self.fc1_2(y1))
-        y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
+        
+        y1 = y1.squeeze(-1)
+        y1 = F.relu(self.fc1_3(y1))
+        #y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
         
         x2 = F.relu(self.input_projection2(x))
         x2 += self.pos_encoder2
