@@ -6,11 +6,26 @@ import math, base64, io, os, time, cv2
 import numpy as np
 
 #============metrics ==================
-def MAE(ypred, y) :
+def MAE(y, ypred) :
+    """for period"""
     batch_size = y.shape[0]
-    
-    
+    yarr = y.clone().detach().cpu().numpy()
+    ypredarr = ypred.clone().detach().cpu().numpy().argmax(1)
+    ae = np.sum(np.absolute(yarr - ypredarr))
+    mae = ae / (yarr.shape[0]*yarr.shape[1])
     return mae
+
+def f1score(y, ypred) :
+    """for periodicity"""
+    batch_size = y.shape[0]
+    yarr = y.clone().detach().cpu().numpy()
+    ypredarr = ypred.clone().detach().cpu().numpy().astype(bool)
+    tp = np.logical_and(yarr, ypredarr).sum()
+    precision = tp / (ypredarr.sum() + 1e-6)
+    recall = tp / (yarr.sum() + 1e-6)
+    fscore = 2*precision*recall/(precision + recall)
+    return fscore
+
 #=============functions================
 
 def sim_matrix(a, b, eps=1e-8):
@@ -125,9 +140,9 @@ class RepNet(nn.Module):
                                                     dropout = 0.1,
                                                     activation = 'relu')
         
-        self.fc1_1 = nn.Linear(512, 256)
-        self.fc1_2 = nn.Linear(256, 1)
-        self.fc1_3 = nn.Linear(self.num_frames, 1)
+        self.dropout1 = nn.Dropout(0.25)
+        self.fc1_1 = nn.Linear(512, 512)
+        self.fc1_2 = nn.Linear(512, self.num_frames//2)
 
         #periodicity prediction
         self.input_projection2 = nn.Linear(self.num_frames * 32, 512)
@@ -138,8 +153,9 @@ class RepNet(nn.Module):
                                                         dim_feedforward = 512,            
                                                         dropout = 0.1,
                                                         activation = 'relu')
-        self.fc2_1 = nn.Linear(512, 256)
-        self.fc2_2 = nn.Linear(256, 1)
+        self.dropout2 = nn.Dropout(0.25)
+        self.fc2_1 = nn.Linear(512, 512)
+        self.fc2_2 = nn.Linear(512, 1)
 
     def forward(self, x):
         batch_size = x.shape[0]
@@ -159,20 +175,20 @@ class RepNet(nn.Module):
         x = torch.transpose(x, 1, 2)                                #batch, num_frame, 32, num_frame
         x = torch.reshape(x, (batch_size, self.num_frames, -1))     #batch, num_frame, 32*num_frame
         
-        x1 = F.relu(self.input_projection1(x))                      #batch, num_frame, d_model=512
-        x1 += self.pos_encoder1
+        x = F.relu(self.input_projection1(x))                      #batch, num_frame, d_model=512
+        x += self.pos_encoder1
         
-        x1 = torch.transpose(x1, 0, 1)
-        x1 = self.trans_encoder1(x1)
-        x1 = torch.transpose(x1, 0, 1)
+        x = torch.transpose(x, 0, 1)
+        x = self.trans_encoder1(x)
+        x = torch.transpose(x, 0, 1)
         
-        y1 = F.relu(self.fc1_1(x1))
+        y = self.dropout1(x)
+        y1 = F.relu(self.fc1_1(y))
         y1 = F.relu(self.fc1_2(y1))
         
-        y1 = y1.squeeze(-1)
-        y1 = F.relu(self.fc1_3(y1))
-        #y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
+        y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
         
+        '''
         x2 = F.relu(self.input_projection2(x))
         x2 += self.pos_encoder2
         
@@ -180,6 +196,8 @@ class RepNet(nn.Module):
         x2 = self.trans_encoder2(x2)
         x2 = torch.transpose(x2, 0, 1)
         
-        y2 = F.relu(self.fc2_1(x2))
+        y2 = self.dropout1(x2)
+        '''
+        y2 = F.relu(self.fc2_1(y))
         y2 = F.relu(self.fc2_2(y2))
         return y1, y2, final_embs
