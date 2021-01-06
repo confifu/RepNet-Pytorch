@@ -5,6 +5,9 @@ from PIL import Image
 from torchvision import transforms
 
 import cv2
+import glob
+import random
+from random import randrange, randint
 import math, base64, io, os, time
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
@@ -49,7 +52,6 @@ class miniDataset(Dataset):
     def __getitem__(self, index):
         
         #get another random number betweeen 0 and 14 'a'
-        from random import randrange
         a = randrange(13) + 1
         
         #take out ith 50 groups of frames
@@ -70,7 +72,13 @@ class miniDataset(Dataset):
         
         X = torch.cat(Xlist)
                           
-        y1 = torch.FloatTensor([self.count//self.numseq])       #numrep
+        numreps = self.count//self.numseq
+        y1 = [0 for i in range(0,a)]
+        y1.extend([50//numreps for i in range(0, 50)])
+        y1.extend([0 for i in range(0, 14 - a)])
+        y1 = torch.LongTensor(y1)                #periodicity
+        
+        
         
         y2 = [0 for i in range(0, a)]
         y2.extend([1 for i in range(0, 50)])
@@ -106,52 +114,182 @@ def getCombinedDataset(dfPath, videoDir, videoPrefix):
     return megaDataset
 
 
+'''==============================================Synthetic_DS==============================================='''
 
-def rotate_image(image, angle):
-  image_center = tuple(np.array(image.shape[1::-1]) / 2)
-  rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
-  result = cv2.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv2.INTER_LINEAR)
-  return result
+#returns a 64 length array that goes low->mid->high->mid
 
+def getRandomTransformParameter(high, mid, low, length=64):
+    retarr = []
+    midpos = randint(length//4, length//2)
+    highpos = randint(length//2, 3*length//4)
+    
+    retarr = list(np.linspace(start=low, stop=mid, num=midpos))
+    retarr.extend(list(np.linspace(start=mid, stop=high, num=highpos-midpos)))
+    retarr.extend(list(np.linspace(start=high, stop=mid, num=length - highpos)))
+    return np.array(retarr)
+    
+def randomTransform(frames):
+    
+    #resize
+    
+    scaleParams = getRandomTransformParameter(1, 0.95, 0.9)
+    #rotate z
+    zRotateParams = getRandomTransformParameter(-30, 0, 30)
+    #rotate y
+    yRotateParams = getRandomTransformParameter(0.05, 0.025, 0.0, 32)
+    #rotate x
+    xRotateParams = getRandomTransformParameter(-0.05, 0.0, 0.05, 32)
+    #translate horizontally
+    horizTransParam = getRandomTransformParameter(0.125, 0.0, -0.125)
+    #translate vertically
+    verticalTransParam = getRandomTransformParameter(-0.125, 0.0, 0.125)
+    #cheap filters
+    
+    for i, frame in enumerate(frames[:32]):
+        #rotate z and scale
+        #frame = rotate_bound(frame, zRotateParams[i])
+        
+        #rotate y and x
+        h = frame.shape[0]
+        w = frame.shape[1]
+        fx = xRotateParams[i]/2
+        pts1 = np.float32([
+                           [0, 0],
+                           [0, h],
+                           [w, 0],
+                           [w, h]
+                        ])
+
+        pts2 = np.float32([
+                           [-w * min(0,fx)      , h * np.abs(fx)],
+                           [ w * max(0,fx)      , h * (1 - np.abs(fx))],
+                           [ w * (1 + min(0,fx)), h * np.abs(fx)],
+                           [ w * (1 - max(0,fx)), h * (1 - np.abs(fx))]
+                        ])
+        
+        M = cv2.getPerspectiveTransform(pts1, pts2)
+        frames[i] = cv2.warpPerspective(frame, M, (w, h), flags = cv2.INTER_AREA)
+    
+    for i, frame in enumerate(frames[32:]):
+        
+        #rotate y and x
+        h = frame.shape[0]
+        w = frame.shape[1]
+        fy = yRotateParams[i]/2
+        pts1 = np.float32([
+                           [0, 0],
+                           [0, h],
+                           [w, 0],
+                           [w, h]
+                        ])
+
+        pts2 = np.float32([
+                           [ w * np.abs(fy)      , -h * min(0,fy)],
+                           [ w * np.abs(fy)      , h * (1 + min(0,fy))],
+                           [ w * (1 - np.abs(fy)), h * max(0,fy) ],
+                           [ w * (1 - np.abs(fy)), h * (1 - max(0,fy))]
+                        ])
+
+        
+        M = cv2.getPerspectiveTransform(pts1, pts2)
+        frames[32+i] = cv2.warpPerspective(frame, M, (w, h), flags = cv2.INTER_AREA)
+
+    newFrames = []
+    for i, frame in enumerate(frames):
+        sp = 1 - scaleParams[i]
+        frame = cv2.copyMakeBorder(frame,
+                                   int(frame.shape[0] * sp),
+                                   int(frame.shape[0] * sp),
+                                   int(frame.shape[1] * sp),
+                                   int(frame.shape[1] * sp),
+                                   cv2.BORDER_CONSTANT,
+                                   value=[0,0,0])
+        
+        #x,y transforms
+        h = frame.shape[0]
+        w = frame.shape[1]
+        rows = np.any(frame, axis=1)
+        cols = np.any(frame, axis=0)
+        ymin, ymax = np.where(rows)[0][[0, -1]]
+        xmin, xmax = np.where(cols)[0][[0, -1]]
+        
+        hTrans = horizTransParam[i] * w
+        xT = max(hTrans, -xmin) if hTrans < 0 else min(hTrans, w - xmax)
+        
+        vTrans = verticalTransParam[i] * h
+        yT = max(vTrans, -ymin) if vTrans < 0 else min(vTrans, h - ymax)
+        
+        M = np.float32([[1,0,xT],[0,1,yT]])
+        frame = cv2.warpAffine(frame,M,(w,h), flags = cv2.INTER_AREA)
+
+        newFrames.append(frame)
+
+    return newFrames
+
+def rotate_bound(image, angle):
+    (h, w) = image.shape[:2]
+    (cX, cY) = (w // 2, h // 2)
+    
+    M = cv2.getRotationMatrix2D((cX, cY), -angle, 1.0)
+    cos = np.abs(M[0, 0])
+    sin = np.abs(M[0, 1])
+    
+    nW = int((h * sin) + (w * cos))
+    nH = int((h * cos) + (w * sin))
+    
+    M[0, 2] += (nW / 2) - cX
+    M[1, 2] += (nH / 2) - cY
+    
+    return cv2.warpAffine(image, M, (int(nW), int(nH)), flags = cv2.INTER_AREA)
 
 class SyntheticDataset(Dataset):
     
-    def __init__(self, videoPath, filename, length):
+    def __init__(self, videoPath, filename, extension, length):
         
-        self.sourcePath = videoPath + '/' + filename
+        self.sourcePath = videoPath + '/' + filename + '.' + extension
         self.length = length
 
     def __getitem__(self, index):
 
         X, beginNoRepFrames, endNoRepFrames, count = self.generateRepVid()
         
-        periodicity = np.zeros((64, 1)) 
+        periodicity = np.zeros((64, 1))
+        periodLength = np.zeros((64, 1))
         for i in range(64):
             if beginNoRepFrames < i < 64 - endNoRepFrames:
                 periodicity[i] = True
+                periodLength[i] = max(0, (64 - beginNoRepFrames - endNoRepFrames)//count)
 
-        numReps = torch.LongTensor([count])
+        periodLength = torch.LongTensor(periodLength).squeeze(1)
         periodicity = torch.BoolTensor(periodicity)
-        return X, numReps, periodicity
+        return X, periodLength, periodicity
 
     def generateRepVid(self):
-
-        assert os.path.exists(self.sourcePath), "Video file does not exist" + self.sourcePath
         
-        from random import randrange, randint
+        while True:
+            path = random.choice(glob.glob(self.sourcePath))
+            assert os.path.exists(path), "No file with this pattern exist" + self.sourcePath
+
+            cap = cv2.VideoCapture(path)
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total > 64:
+                break
+            else:
+                os.remove(path)
+
+
         
         mirror = randint(0, 1)
-        clipDur = randint(60, 120)
-        count = randint(3, 10)
-        repDur = ((mirror + 1)*count + mirror)* clipDur
-        noRepDur = repDur//4
-        begNoRepDur = randint(1, noRepDur - 1)
+        count = randint(2, 10)
+        
+        clipDur = randint(min(30, total//10), min(60, total//5))
+        repDur = ((mirror + 1)*count)* clipDur
+        noRepDur = min(total - clipDur, repDur//8)
+        begNoRepDur = randint(0,  noRepDur - 1)
         endNoRepDur = noRepDur - begNoRepDur
         totalDur = noRepDur + repDur
         
-        cap = cv2.VideoCapture(self.sourcePath)
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        startFrame = randint(0, total - 2 * (clipDur + noRepDur))         #not taking risks
+        startFrame = randint(0, total - (clipDur + noRepDur))         #not taking risks
         cap.set(cv2.CAP_PROP_POS_FRAMES, startFrame)
         
         frames = []
@@ -159,7 +297,7 @@ class SyntheticDataset(Dataset):
             ret, frame = cap.read()
             if ret is False or len(frames) == clipDur + noRepDur:
                 break
-            
+            frame = cv2.resize(frame , (512, 512), interpolation = cv2.INTER_AREA)
             frames.append(frame)
         
         cap.release()
@@ -174,7 +312,6 @@ class SyntheticDataset(Dataset):
             if mirror:
                 finalFrames.extend(repFrames[::-1])
         
-        finalFrames.extend(repFrames)
         finalFrames.extend(endNoRepFrames)
         
         newFrames = []
@@ -184,11 +321,14 @@ class SyntheticDataset(Dataset):
         angle = 0
         change = 2
         tensorList = []
+        
+        
+        try:
+            newFrames = randomTransform(newFrames)
+        except:
+            return self.generateRepVid()
+            
         for frame in newFrames:
-            if angle > 45 and change > 0:
-                change = -change
-            angle = angle + change
-            frame = rotate_image(frame, angle)
             img = Image.fromarray(frame)
             preprocess = transforms.Compose([
             transforms.Resize((112, 112), 2),
