@@ -68,6 +68,13 @@ def get_sims(embs, temperature = 13.544):
     sims = torch.vstack(simsarr)
     sims /= temperature
     sims = F.softmax(sims, dim=-1)
+    
+    sims = torch.log(sims)
+    norm = torchvision.transforms.Normalize((0.0), (0.5))
+    sims = norm(sims)
+    sims = sims - sims.min()
+    sims = sims/sims.max()
+    
     return sims
         
 #============classes===================
