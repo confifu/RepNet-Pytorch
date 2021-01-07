@@ -72,9 +72,10 @@ def get_sims(embs, temperature = 13.544):
     sims = torch.log(sims)
     norm = torchvision.transforms.Normalize((0.0), (0.5))
     sims = norm(sims)
-    sims = sims - sims.min()
-    sims = sims/sims.max()
-    
+    for i in range(batch_size):
+        sims[i] = sims[i] - sims[i].min()
+        sims[i] = sims[i]/sims[i].max()
+
     return sims
         
 #============classes===================
