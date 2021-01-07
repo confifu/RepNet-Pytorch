@@ -72,11 +72,15 @@ def get_sims(embs, temperature = 13.544):
     sims = torch.log(sims)
     norm = torchvision.transforms.Normalize((0.0), (0.5))
     sims = norm(sims)
+    
+    simsarr = []
     for i in range(batch_size):
-        sims[i] = sims[i] - sims[i].min()
-        sims[i] = sims[i]/sims[i].max()
-
-    return sims
+        sim = sims[i] - sims[i].min()
+        sim = sim/sim.max()
+        simsarr.append(sim.unsqueeze(0))
+    
+    nsims = torch.vstack(simsarr)
+    return nsims
         
 #============classes===================
 class ResNet50Bottom(nn.Module):
