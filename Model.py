@@ -23,7 +23,10 @@ def f1score(y, ypred) :
     tp = np.logical_and(yarr, ypredarr).sum()
     precision = tp / (ypredarr.sum() + 1e-6)
     recall = tp / (yarr.sum() + 1e-6)
-    fscore = 2*precision*recall/(precision + recall)
+    if precision + recall == 0:
+        fscore = 0
+    else :
+        fscore = 2*precision*recall/(precision + recall)
     return fscore
 
 #=============functions================
@@ -69,7 +72,7 @@ def get_sims(embs, temperature = 13.544):
     sims /= temperature
     sims = F.softmax(sims, dim=-1)
     
-    sims = torch.log(sims)
+    sims = torch.log(sims + 1e-10)
     norm = torchvision.transforms.Normalize((0.0), (0.5))
     sims = norm(sims)
     
@@ -213,3 +216,33 @@ class RepNet(nn.Module):
         y2 = F.relu(self.fc2_1(y))
         y2 = F.relu(self.fc2_2(y2))
         return y1, y2, final_embs
+
+#====================================Symmetric Cross Entropy Loss=====================
+
+class SCELoss(torch.nn.Module):
+    def __init__(self, num_classes=10, alpha=1.0, beta=1.0):
+        super(SCELoss, self).__init__()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.alpha = alpha
+        self.beta = beta
+        self.num_classes = num_classes
+        self.cross_entropy = torch.nn.CrossEntropyLoss()
+
+    def forward(self, pred, labels):
+        # CCE
+        try:
+            ce = self.cross_entropy(pred, labels)
+
+            # RCE
+            pred = F.softmax(pred, dim=1)
+            pred = torch.clamp(pred, min=1e-7, max=1.0)
+            label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).float().to(self.device)
+            label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0).transpose(1, 2)
+            rce = (-1*torch.sum(pred * torch.log(label_one_hot), dim=1))
+
+            # Loss
+            loss = self.alpha * ce + self.beta * rce.mean()
+            return loss
+        except:
+            print("labels", labels)
+            print("pred", pred)
