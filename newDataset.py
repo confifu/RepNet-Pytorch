@@ -52,7 +52,7 @@ class miniDataset(Dataset):
     def __getitem__(self, index):
         
         #get another random number betweeen 0 and 14 'a'
-        a = randrange(13) + 1
+        a = randrange(15)
         
         #take out ith 50 groups of frames
         all_frames = self.getFrames(50 * self.numseq)
@@ -131,102 +131,136 @@ def getRandomTransformParameter(high, mid, low, length=64):
 def randomTransform(frames):
     
     #resize
-    
-    scaleParams = getRandomTransformParameter(1, 0.95, 0.9)
+    scaleParams = getRandomTransformParameter(0.2, 0.1, 0.0)
     #rotate z
-    zRotateParams = getRandomTransformParameter(-30, 0, 30)
+    zRotateParams = getRandomTransformParameter(-10, 0, 10)
     #rotate y
-    yRotateParams = getRandomTransformParameter(0.05, 0.025, 0.0, 32)
+    yRotateParams = getRandomTransformParameter(0.2, 0.1, 0.0, 32)
     #rotate x
-    xRotateParams = getRandomTransformParameter(-0.05, 0.0, 0.05, 32)
+    xRotateParams = getRandomTransformParameter(-0.1, 0.0, 0.1, 32)
     #translate horizontally
     horizTransParam = getRandomTransformParameter(0.125, 0.0, -0.125)
     #translate vertically
     verticalTransParam = getRandomTransformParameter(-0.125, 0.0, 0.125)
     #cheap filters
     
+    #rotate z
+    
+        
     for i, frame in enumerate(frames[:32]):
-        #rotate z and scale
-        #frame = rotate_bound(frame, zRotateParams[i])
-        
-        #rotate y and x
-        h = frame.shape[0]
-        w = frame.shape[1]
-        fx = xRotateParams[i]/2
-        pts1 = np.float32([
-                           [0, 0],
-                           [0, h],
-                           [w, 0],
-                           [w, h]
-                        ])
-
-        pts2 = np.float32([
-                           [-w * min(0,fx)      , h * np.abs(fx)],
-                           [ w * max(0,fx)      , h * (1 - np.abs(fx))],
-                           [ w * (1 + min(0,fx)), h * np.abs(fx)],
-                           [ w * (1 - max(0,fx)), h * (1 - np.abs(fx))]
-                        ])
-        
-        M = cv2.getPerspectiveTransform(pts1, pts2)
-        frames[i] = cv2.warpPerspective(frame, M, (w, h), flags = cv2.INTER_AREA)
+       
+        #rotate x
+        frames[i] = skew_x(frame, xRotateParams[i])
     
     for i, frame in enumerate(frames[32:]):
         
-        #rotate y and x
-        h = frame.shape[0]
-        w = frame.shape[1]
-        fy = yRotateParams[i]/2
-        pts1 = np.float32([
-                           [0, 0],
-                           [0, h],
-                           [w, 0],
-                           [w, h]
-                        ])
-
-        pts2 = np.float32([
-                           [ w * np.abs(fy)      , -h * min(0,fy)],
-                           [ w * np.abs(fy)      , h * (1 + min(0,fy))],
-                           [ w * (1 - np.abs(fy)), h * max(0,fy) ],
-                           [ w * (1 - np.abs(fy)), h * (1 - max(0,fy))]
-                        ])
-
-        
-        M = cv2.getPerspectiveTransform(pts1, pts2)
-        frames[32+i] = cv2.warpPerspective(frame, M, (w, h), flags = cv2.INTER_AREA)
+        #rotate y
+        frames[32+i] = skew_y(frame, yRotateParams[i])
 
     newFrames = []
     for i, frame in enumerate(frames):
-        sp = 1 - scaleParams[i]
-        frame = cv2.copyMakeBorder(frame,
-                                   int(frame.shape[0] * sp),
-                                   int(frame.shape[0] * sp),
-                                   int(frame.shape[1] * sp),
-                                   int(frame.shape[1] * sp),
-                                   cv2.BORDER_CONSTANT,
-                                   value=[0,0,0])
         
-        #x,y transforms
-        h = frame.shape[0]
-        w = frame.shape[1]
-        rows = np.any(frame, axis=1)
-        cols = np.any(frame, axis=0)
-        ymin, ymax = np.where(rows)[0][[0, -1]]
-        xmin, xmax = np.where(cols)[0][[0, -1]]
+        frame = rotate_bound(frame, zRotateParams[i])
+        frame = scale(frame, scaleParams[i])
+        frame = translate(frame, horizTransParam[i], verticalTransParam[i])
         
-        hTrans = horizTransParam[i] * w
-        xT = max(hTrans, -xmin) if hTrans < 0 else min(hTrans, w - xmax)
-        
-        vTrans = verticalTransParam[i] * h
-        yT = max(vTrans, -ymin) if vTrans < 0 else min(vTrans, h - ymax)
-        
-        M = np.float32([[1,0,xT],[0,1,yT]])
-        frame = cv2.warpAffine(frame,M,(w,h), flags = cv2.INTER_AREA)
-
         newFrames.append(frame)
 
     return newFrames
+                  
+
+                      
+def skew_x(image, factor):
+    h = image.shape[0]
+    w = image.shape[1]
+    fx = factor/2
+    
+    image = scale(image, 1)
+    pts1 = np.float32([
+                       [0, 0],
+                       [0, h],
+                       [w, 0],
+                       [w, h]
+                    ])
+    pts1 += np.float32([w,h])
+
+    pts2 = np.float32([
+                       [-w * min(0,fx)      , h * np.abs(fx)],
+                       [ w * max(0,fx)      , h * (1 - np.abs(fx))],
+                       [ w * (1 + min(0,fx)), h * np.abs(fx)],
+                       [ w * (1 - max(0,fx)), h * (1 - np.abs(fx))]
+                    ])
+    pts2 += np.float32([w,h])
+
+    M = cv2.getPerspectiveTransform(pts1, pts2)
+    skewed = cv2.warpPerspective(image, M, (3*w, 3*h), flags = cv2.INTER_AREA)
+    skewed = skewed[w:2*w, h:2*h,:]
+    return skewed
+
+def skew_y(image, factor):
+  
+    h = image.shape[0]
+    w = image.shape[1]
+    fy = factor/2
+  
+    image = scale(image, 1)
+    
+    pts1 = np.float32([
+                       [0, 0],
+                       [0, h],
+                       [w, 0],
+                       [w, h]
+                     ])
+    pts1 = pts1 + np.float32([w, h])
+
+    pts2 = np.float32([
+                       [ w * np.abs(fy)      , -h * min(0,fy)],
+                       [ w * np.abs(fy)      , h * (1 + min(0,fy))],
+                       [ w * (1 - np.abs(fy)), h * max(0,fy) ],
+                       [ w * (1 - np.abs(fy)), h * (1 - max(0,fy))]
+                    ])
+    pts2 = pts2 + np.float32([w, h])
+
+
+    M = cv2.getPerspectiveTransform(pts1, pts2)
+    skewed = cv2.warpPerspective(image, M, (3*w, 3*h), flags = cv2.INTER_AREA)
+    skewed = skewed[w:2*w, h:2*h,:]
+    return skewed
+    
+def translate(image, factorx, factory):
+    h = image.shape[0]
+    w = image.shape[1]
+    rows = np.any(image, axis=1)
+    cols = np.any(image, axis=0)
+    ymin, ymax = np.where(rows)[0][[0, -1]]
+    xmin, xmax = np.where(cols)[0][[0, -1]]
+
+    hTrans = factorx * w
+    xT = max(hTrans, -xmin) if hTrans < 0 else min(hTrans, w - xmax)
+
+    vTrans = factory * h
+    yT = max(vTrans, -ymin) if vTrans < 0 else min(vTrans, h - ymax)
+
+    M = np.float32([[1, 0, xT],[0, 1, yT]])
+    
+    translated = cv2.warpAffine(image, M, (w, h), flags = cv2.INTER_AREA)
+    return translated
+                      
+def scale(image, factor):
+
+    sp = factor
+    scaled = cv2.copyMakeBorder(image,
+                               int(image.shape[0] * sp),
+                               int(image.shape[0] * sp),
+                               int(image.shape[1] * sp),
+                               int(image.shape[1] * sp),
+                               cv2.BORDER_REFLECT)
+    return scaled
 
 def rotate_bound(image, angle):
+    (oh, ow) = image.shape[:2]
+    
+    image = scale(image, 1)
     (h, w) = image.shape[:2]
     (cX, cY) = (w // 2, h // 2)
     
@@ -240,7 +274,9 @@ def rotate_bound(image, angle):
     M[0, 2] += (nW / 2) - cX
     M[1, 2] += (nH / 2) - cY
     
-    return cv2.warpAffine(image, M, (int(nW), int(nH)), flags = cv2.INTER_AREA)
+    image = cv2.warpAffine(image, M, (int(nW), int(nH)), flags = cv2.INTER_AREA)
+    image = image[ow:2*ow, oh:2*oh,:]
+    return image
 
 class SyntheticDataset(Dataset):
     
@@ -276,16 +312,16 @@ class SyntheticDataset(Dataset):
                 break
             else:
                 os.remove(path)
-
-
         
         mirror = randint(0, 1)
-        count = randint(2, 10)
+        count = randint(1, 15)
         
         clipDur = randint(min(30, total//10), min(60, total//5))
         repDur = ((mirror + 1)*count)* clipDur
-        noRepDur = min(total - clipDur, repDur//8)
-        begNoRepDur = randint(0,  noRepDur - 1)
+        noRepDur = min(total-clipDur, int(repDur *(64/(randint(4, 64//count)*count) - 1)))
+        
+        assert(noRepDur >= 0)
+        begNoRepDur = randint(0,  noRepDur)
         endNoRepDur = noRepDur - begNoRepDur
         totalDur = noRepDur + repDur
         
@@ -317,11 +353,10 @@ class SyntheticDataset(Dataset):
         newFrames = []
         for i in range(1, 64 + 1):
             newFrames.append(finalFrames[i * len(finalFrames)//64  - 1])
+            
+        assert(len(newFrames) == 64)
         
-        angle = 0
-        change = 2
         tensorList = []
-        
         
         try:
             newFrames = randomTransform(newFrames)
@@ -339,7 +374,10 @@ class SyntheticDataset(Dataset):
         frames = torch.cat(tensorList)
         
         numBegNoRepFrames = begNoRepDur*64//totalDur
-        numEndNoRepFrames = endNoRepDur*64//totalDur
+        if count == 1:
+            numEndNoRepFrames = 64 - numBegNoRepFrames
+        else:
+            numEndNoRepFrames = endNoRepDur*64//totalDur
         
         return frames, numBegNoRepFrames, numEndNoRepFrames, count
 
