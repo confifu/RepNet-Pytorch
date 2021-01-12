@@ -71,8 +71,8 @@ def get_sims(embs, temperature = 13.544):
     sims = torch.vstack(simsarr)
     sims /= temperature
     sims = F.softmax(sims, dim=-1)
-    
     sims = torch.log(sims + 1e-10)
+    
     norm = torchvision.transforms.Normalize((0.0), (0.5))
     sims = norm(sims)
     
@@ -123,6 +123,8 @@ class RepNet(nn.Module):
         self.num_frames = num_frames
         resnetbase = torchvision.models.resnet50(pretrained=True, progress=True)
         self.resnetBase = ResNet50Bottom(resnetbase)
+        for param in self.resnetBase.parameters():
+            param.requires_grad = False
         
 
         self.conv3D = nn.Conv3d(in_channels = 1024,
@@ -140,35 +142,21 @@ class RepNet(nn.Module):
         
         #reshape from (batch, 32, frame, frame) to  (batch, frame, (frame * 32))
         
-        
-        
-        from torch.distributions import normal
-        m = normal.Normal(0.0, 0.02)
-        #period length prediction
-        
-        self.input_projection1 = nn.Linear(self.num_frames * 32, 512)
-        self.pos_encoder1 = nn.Parameter(m.sample([1, self.num_frames, 1]))
-        #self.pos_encoder1 = PositionalEncoding(512, 0.1)
-        self.trans_encoder1 = nn.TransformerEncoderLayer(d_model = 512,           
+        self.input_projection = nn.Linear(self.num_frames * 32, 512)
+        self.pos_encoder = PositionalEncoding(512, 0.1, 64)
+        self.trans_encoder = nn.TransformerEncoderLayer(d_model = 512,           
                                                     nhead = 4,
                                                     dim_feedforward = 512,            
-                                                    dropout = 0.1,
+                                                    dropout = 0.2,
                                                     activation = 'relu')
         
-        self.dropout1 = nn.Dropout(0.25)
+        self.dropout = nn.Dropout(0.25)
+        
+        #period length prediction
         self.fc1_1 = nn.Linear(512, 512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
 
         #periodicity prediction
-        self.input_projection2 = nn.Linear(self.num_frames * 32, 512)
-        self.pos_encoder2 = nn.Parameter(m.sample([1, self.num_frames, 1]))
-        #self.pos_encoder2 = PositionalEncoding(512, 0.1)
-        self.trans_encoder2 =  nn.TransformerEncoderLayer(d_model = 512,           
-                                                        nhead = 4,
-                                                        dim_feedforward = 512,            
-                                                        dropout = 0.1,
-                                                        activation = 'relu')
-        self.dropout2 = nn.Dropout(0.25)
         self.fc2_1 = nn.Linear(512, 512)
         self.fc2_2 = nn.Linear(512, 1)
 
@@ -186,33 +174,24 @@ class RepNet(nn.Module):
         final_embs = x
         x = torch.transpose(x, 1, 2)
         x = get_sims(x)
-        x = F.relu(self.conv3x3(x))                                 #batch, 32, num_frame, num_frame
+        
+        x = F.relu(self.conv3x3(x))                              #batch, 32, num_frame, num_frame
         x = torch.transpose(x, 1, 2)                                #batch, num_frame, 32, num_frame
         x = torch.reshape(x, (batch_size, self.num_frames, -1))     #batch, num_frame, 32*num_frame
         
-        x = F.relu(self.input_projection1(x))                      #batch, num_frame, d_model=512
-        x += self.pos_encoder1
+        x = F.relu(self.input_projection(x))                      #batch, num_frame, d_model=512
         
-        x = torch.transpose(x, 0, 1)
-        x = self.trans_encoder1(x)
+        x = torch.transpose(x, 0, 1)                                 #num_frame, batch, d_model=512
+        x = self.pos_encoder(x)
+        x = self.trans_encoder(x)
         x = torch.transpose(x, 0, 1)
         
-        y = self.dropout1(x)
+        y = self.dropout(x)
         y1 = F.relu(self.fc1_1(y))
         y1 = F.relu(self.fc1_2(y1))
         
         y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
         
-        '''
-        x2 = F.relu(self.input_projection2(x))
-        x2 += self.pos_encoder2
-        
-        x2 = torch.transpose(x2, 0, 1)
-        x2 = self.trans_encoder2(x2)
-        x2 = torch.transpose(x2, 0, 1)
-        
-        y2 = self.dropout1(x2)
-        '''
         y2 = F.relu(self.fc2_1(y))
         y2 = F.relu(self.fc2_2(y2))
         return y1, y2, final_embs
