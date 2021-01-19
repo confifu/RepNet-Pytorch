@@ -172,7 +172,7 @@ class RepNet(nn.Module):
         
         y = F.relu(self.fc1_1(y))
         y = F.relu(self.fc1_2(y))
-        y = y1.transpose(1, 2)       #Cross enropy wants (minbatch*classes*dimensions)
+        y = y.transpose(1, 2)       #Cross enropy wants (minbatch*classes*dimensions)
         
         return y, final_embs
 
