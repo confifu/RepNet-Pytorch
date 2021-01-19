@@ -5,8 +5,6 @@ import torch.nn.functional as F
 import math, base64, io, os, time, cv2
 import numpy as np
 
-from stn import SpatialTransformer
-
 #============metrics ==================
 def MAE(y, ypred) :
     """for period"""
