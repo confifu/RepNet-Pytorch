@@ -129,7 +129,7 @@ class RepNet(nn.Module):
                                 kernel_size = 3,
                                 padding = (3,0,0),
                                 dilation = (3,1,1))
-        #self.bn1 = nn.BatchNorm3d(512)
+        self.bn1 = nn.BatchNorm3d(512)
         self.pool = nn.MaxPool3d(kernel_size = (1, 5, 5))
         self.sims = Sims()
         
@@ -153,7 +153,7 @@ class RepNet(nn.Module):
         x = self.resnetBase(x)
         x = x.view(batch_size, self.num_frames, x.shape[1],  x.shape[2],  x.shape[3])
         x = x.transpose(1, 2)
-        x = F.relu(self.conv3D(x))
+        x = F.relu(self.bn1(self.conv3D(x)))
         x = self.pool(x).squeeze(3).squeeze(3)
         final_embs = x
         x = x.transpose(1, 2)
