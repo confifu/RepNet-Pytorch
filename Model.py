@@ -5,6 +5,8 @@ import torch.nn.functional as F
 import math, base64, io, os, time, cv2
 import numpy as np
 
+from stn import SpatialTransformer
+
 #============metrics ==================
 def MAE(y, ypred) :
     """for period"""
@@ -29,63 +31,33 @@ def f1score(y, ypred) :
         fscore = 2*precision*recall/(precision + recall)
     return fscore
 
-#=============functions================
-
-def sim_matrix(a, b, eps=1e-8):
-    a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
-    a_norm = a / torch.max(a_n, eps * torch.ones_like(a_n))
-    b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
-    sim_mt = torch.mm(a_norm, b_norm.transpose(0, 1))
-    return sim_mt
-
-
-def pairwise_l2_distance(a, b):
-  """Computes pairwise distances between all rows of a and all rows of b."""
-  norm_a = torch.sum(torch.square(a), 1)
-  norm_a = torch.reshape(norm_a, [-1, 1])
-  norm_b = torch.sum(torch.square(b), 1)
-  norm_b = torch.reshape(norm_b, [1, -1])
-  dist = norm_a - 2.0 * torch.mm(a, b.transpose(0,1)) + norm_b
-  dist[dist < 0] = 0
-  dist = -1 * dist
-  return dist
-
-
-'''returns 1*num_frame*num_frame'''
-def _get_sims(embs):
-    """Calculates self-similarity between sequence of embeddings."""
-    dist = pairwise_l2_distance(embs, embs)
-    #dist = sim_matrix(embs, embs)
-    sims = dist.unsqueeze(0)
-    return sims
-
-def get_sims(embs, temperature = 13.544):
-    batch_size = embs.shape[0]
-    seq_len = embs.shape[1]
-    embs = torch.reshape(embs, (batch_size, seq_len, -1))
-
-    simsarr=[]
-    for i in range(batch_size):
-        simsarr.append(_get_sims(embs[i,:,:]).unsqueeze(0))
-    
-    sims = torch.vstack(simsarr)
-    sims /= temperature
-    sims = F.softmax(sims, dim=-1)
-    sims = torch.log(sims + 1e-10)
-    
-    norm = torchvision.transforms.Normalize((0.0), (0.5))
-    sims = norm(sims)
-    
-    simsarr = []
-    for i in range(batch_size):
-        sim = sims[i] - sims[i].min()
-        sim = sim/sim.max()
-        simsarr.append(sim.unsqueeze(0))
-    
-    nsims = torch.vstack(simsarr)
-    return nsims
-        
 #============classes===================
+
+class Sims(nn.Module):
+    def __init__(self):
+        super(Sims, self).__init__()
+        
+    def forward(self, x):
+        '''(N, S, E)  --> (N, S, S)'''
+        
+        xlist = [self.l2_sim(emb).unsqueeze(0) for emb in torch.unbind(x)]
+        x = torch.vstack(xlist)
+        x = F.softmax(x, dim=-1)
+        return x
+            
+    def l2_sim(self, emb):
+        '''(S, E) --> (S, S)'''
+        norm = torch.sum(torch.square(emb), 1)
+        
+        norm_a = norm.view(-1, 1)
+        norm_b = norm.view(1, -1)
+
+        dist = norm_a + norm_b - 2.0 * torch.mm(emb, emb.transpose(0,1))
+        sim = (-1*F.relu(dist)).unsqueeze(0)
+        return sim
+
+#---------------------------------------------------------------------------
+
 class ResNet50Bottom(nn.Module):
     def __init__(self, original_model):
         super(ResNet50Bottom, self).__init__()
@@ -96,6 +68,8 @@ class ResNet50Bottom(nn.Module):
         x = self.rnet(x)
         x = self.left(x)
         return x
+
+#---------------------------------------------------------------------------
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
@@ -114,87 +88,93 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
 
+#----------------------------------------------------------------------------
+
+class TransEncoder(nn.Module):
+    def __init__(self, d_model, n_head, dim_ff, dropout=0.0):
+        super(TransEncoder, self).__init__()
+        
+        self.pos_encoder = PositionalEncoding(d_model, 0.1, 64)
+        encoder_layer = nn.TransformerEncoderLayer(d_model = d_model,           
+                                                    nhead = n_head,
+                                                    dim_feedforward = dim_ff,
+                                                    dropout = 0.0,
+                                                    activation = 'relu')
+        
+        self.trans_encoder = nn.TransformerEncoder(encoder_layer, 1)
+        
+    def forward(self, src):
+        src = self.pos_encoder(src)
+        e_op = self.trans_encoder(src)
+        return e_op
+
+
 #=============Model====================
 
 
 class RepNet(nn.Module):
     def __init__(self, num_frames):
         super(RepNet, self).__init__()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
         self.num_frames = num_frames
         resnetbase = torchvision.models.resnet50(pretrained=True, progress=True)
         self.resnetBase = ResNet50Bottom(resnetbase)
+        
+        '''
         for param in self.resnetBase.parameters():
             param.requires_grad = False
+        '''
         
-
         self.conv3D = nn.Conv3d(in_channels = 1024,
                                 out_channels = 512,
                                 kernel_size = 3,
-                                padding = 3,
-                                dilation = 3)
-        self.bn1 = nn.BatchNorm3d(512)
-        #get_sims
+                                padding = (3,0,0),
+                                dilation = (3,1,1))
+        #self.bn1 = nn.BatchNorm3d(512)
+        self.pool = nn.MaxPool3d(kernel_size = (1, 5, 5))
+        self.sims = Sims()
         
         self.conv3x3 = nn.Conv2d(in_channels = 1,
-                                 out_channels = 32,                  
+                                 out_channels = 32,
                                  kernel_size = 3,
                                  padding = 1)
         
-        #reshape from (batch, 32, frame, frame) to  (batch, frame, (frame * 32))
-        
         self.input_projection = nn.Linear(self.num_frames * 32, 512)
-        self.pos_encoder = PositionalEncoding(512, 0.1, 64)
-        self.trans_encoder = nn.TransformerEncoderLayer(d_model = 512,           
-                                                    nhead = 4,
-                                                    dim_feedforward = 512,            
-                                                    dropout = 0.2,
-                                                    activation = 'relu')
         
+        self.transEncoder = TransEncoder(d_model=512, n_head=4, dim_ff=512)
         self.dropout = nn.Dropout(0.25)
         
         #period length prediction
         self.fc1_1 = nn.Linear(512, 512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
-
-        #periodicity prediction
-        self.fc2_1 = nn.Linear(512, 512)
-        self.fc2_2 = nn.Linear(512, 1)
-
+    
     def forward(self, x):
-        batch_size = x.shape[0]
-        x = torch.reshape(x, (-1, 3, x.shape[3], x.shape[4]))
+        batch_size, _, c, h, w = x.shape
+        x = x.view(-1, c, h, w)
         x = self.resnetBase(x)
-        x = torch.reshape(x, (batch_size,-1,x.shape[1],x.shape[2],x.shape[3]))
-        x = torch.transpose(x, 1, 2)
-        x = self.conv3D(x)
-        x = F.relu(self.bn1(x))
-        x,_ = torch.max(x, 4)
-        x,_ = torch.max(x, 3)
-        
+        x = x.view(batch_size, self.num_frames, x.shape[1],  x.shape[2],  x.shape[3])
+        x = x.transpose(1, 2)
+        x = F.relu(self.conv3D(x))
+        x = self.pool(x).squeeze(3).squeeze(3)
         final_embs = x
-        x = torch.transpose(x, 1, 2)
-        x = get_sims(x)
+        x = x.transpose(1, 2)
+        x = self.sims(x)
         
-        x = F.relu(self.conv3x3(x))                              #batch, 32, num_frame, num_frame
-        x = torch.transpose(x, 1, 2)                                #batch, num_frame, 32, num_frame
-        x = torch.reshape(x, (batch_size, self.num_frames, -1))     #batch, num_frame, 32*num_frame
-        
-        x = F.relu(self.input_projection(x))                      #batch, num_frame, d_model=512
-        
-        x = torch.transpose(x, 0, 1)                                 #num_frame, batch, d_model=512
-        x = self.pos_encoder(x)
-        x = self.trans_encoder(x)
-        x = torch.transpose(x, 0, 1)
-        
+        x = F.relu(self.conv3x3(x))           #batch, 32, num_frame, num_frame
+        x = x.view(batch_size, 32*self.num_frames, self.num_frames)
+        x = x.transpose(1, 2)                 #batch, num_frame, 32*num_frame
+        x = F.relu(self.input_projection(x))  #batch, num_frame, d_model=512
+        x = x.transpose(0, 1)                 #num_frame, batch, d_model=512
+        x = self.transEncoder(x)
+        x = x.transpose(0, 1)
         y = self.dropout(x)
-        y1 = F.relu(self.fc1_1(y))
-        y1 = F.relu(self.fc1_2(y1))
         
-        y1 = torch.transpose(y1, 1, 2)              #Cross enropy wants (minbatch*classes*dimensions)
+        y = F.relu(self.fc1_1(y))
+        y = F.relu(self.fc1_2(y))
+        y = y1.transpose(1, 2)       #Cross enropy wants (minbatch*classes*dimensions)
         
-        y2 = F.relu(self.fc2_1(y))
-        y2 = F.relu(self.fc2_2(y2))
-        return y1, y2, final_embs
+        return y, final_embs
 
 #====================================Symmetric Cross Entropy Loss=====================
 
@@ -209,19 +189,48 @@ class SCELoss(torch.nn.Module):
 
     def forward(self, pred, labels):
         # CCE
-        try:
-            ce = self.cross_entropy(pred, labels)
+        ce = self.cross_entropy(pred, labels)
 
-            # RCE
-            pred = F.softmax(pred, dim=1)
-            pred = torch.clamp(pred, min=1e-7, max=1.0)
-            label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).float().to(self.device)
-            label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0).transpose(1, 2)
-            rce = (-1*torch.sum(pred * torch.log(label_one_hot), dim=1))
+        # RCE
+        pred = F.softmax(pred, dim=1)
+        pred = torch.clamp(pred, min=1e-7, max=1.0)
+        label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).float().to(self.device)
+        label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0).transpose(1, 2)
+        rce = (-1*torch.sum(pred * torch.log(label_one_hot), dim=1))
 
-            # Loss
-            loss = self.alpha * ce + self.beta * rce.mean()
-            return loss
-        except:
-            print("labels", labels)
-            print("pred", pred)
+        # Loss
+        loss = self.alpha * ce + self.beta * rce.mean()
+        return loss
+
+
+#====================GCE=====================
+
+class TruncatedLoss(nn.Module):
+
+    def __init__(self, q=0.7, k=0.5, trainset_size=50000):
+        super(TruncatedLoss, self).__init__()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.q = q
+        self.k = k
+        self.weight = torch.nn.Parameter(data=torch.ones(trainset_size, 1), requires_grad=False).to(self.device)
+             
+    def forward(self, logits, targets, indexes):
+        p = F.softmax(logits, dim=1)
+        Yg = torch.gather(p, 1, torch.unsqueeze(targets, 1)).to(self.device)
+
+        loss = ((1-(Yg**self.q))/self.q)*self.weight[indexes] - ((1-(self.k**self.q))/self.q)*self.weight[indexes]
+        loss = torch.mean(loss)
+
+        return loss
+
+    def update_weight(self, logits, targets, indexes):
+        p = F.softmax(logits, dim=1)
+        Yg = torch.gather(p, 1, torch.unsqueeze(targets, 1))
+        Lq = ((1-(Yg**self.q))/self.q)
+        Lqk = np.repeat(((1-(self.k**self.q))/self.q), targets.size(0))
+        Lqk = torch.from_numpy(Lqk).type(torch.cuda.FloatTensor)
+        Lqk = torch.unsqueeze(Lqk, 1)
+        
+
+        condition = torch.gt(Lqk, Lq)
+        self.weight[indexes] = condition.type(torch.cuda.FloatTensor)
