@@ -34,25 +34,19 @@ def f1score(y, ypred) :
 class Sims(nn.Module):
     def __init__(self):
         super(Sims, self).__init__()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
     def forward(self, x):
         '''(N, S, E)  --> (N, S, S)'''
+        f = x.shape[1]
         
-        xlist = [self.l2_sim(emb).unsqueeze(0) for emb in torch.unbind(x)]
-        x = torch.vstack(xlist)
-        x = F.softmax(x, dim=-1)
-        return x
-            
-    def l2_sim(self, emb):
-        '''(S, E) --> (S, S)'''
-        norm = torch.sum(torch.square(emb), 1)
-        
-        norm_a = norm.view(-1, 1)
-        norm_b = norm.view(1, -1)
+        I = torch.ones(1, f).to(self.device)
+        xr = torch.einsum('bfe,gh->bhfe', (x, I))   #[x, x, x, x ....]
+        xc = torch.einsum('bfe,gh->bfhe', (x, I))   #[x x x x ....]
+        diff = xr - xc
+        out = torch.einsum('bfge,bfge->bfg', (diff, diff))
 
-        dist = norm_a + norm_b - 2.0 * torch.mm(emb, emb.transpose(0,1))
-        sim = (-1*F.relu(dist)).unsqueeze(0)
-        return sim
+        return out.unsqueeze(1)
 
 #---------------------------------------------------------------------------
 
@@ -63,8 +57,8 @@ class ResNet50Bottom(nn.Module):
         self.left=nn.Sequential(*list(original_model.children())[-4][:3])
         
     def forward(self, x):
-        x = self.rnet(x)
-        x = self.left(x)
+        x = F.relu(self.rnet(x))
+        x = F.relu(self.left(x))
         return x
 
 #---------------------------------------------------------------------------
@@ -89,7 +83,7 @@ class PositionalEncoding(nn.Module):
 #----------------------------------------------------------------------------
 
 class TransEncoder(nn.Module):
-    def __init__(self, d_model, n_head, dim_ff, dropout=0.0):
+    def __init__(self, d_model, n_head, dim_ff, dropout=0.0, num_layers = 1):
         super(TransEncoder, self).__init__()
         
         self.pos_encoder = PositionalEncoding(d_model, 0.1, 64)
@@ -99,7 +93,7 @@ class TransEncoder(nn.Module):
                                                     dropout = 0.0,
                                                     activation = 'relu')
         
-        self.trans_encoder = nn.TransformerEncoder(encoder_layer, 1)
+        self.trans_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
         
     def forward(self, src):
         src = self.pos_encoder(src)
@@ -119,11 +113,6 @@ class RepNet(nn.Module):
         resnetbase = torchvision.models.resnet50(pretrained=True, progress=True)
         self.resnetBase = ResNet50Bottom(resnetbase)
         
-        '''
-        for param in self.resnetBase.parameters():
-            param.requires_grad = False
-        '''
-        
         self.conv3D = nn.Conv3d(in_channels = 1024,
                                 out_channels = 512,
                                 kernel_size = 3,
@@ -132,19 +121,24 @@ class RepNet(nn.Module):
         self.bn1 = nn.BatchNorm3d(512)
         self.pool = nn.MaxPool3d(kernel_size = (1, 5, 5))
         self.sims = Sims()
+        self.bn2 = nn.BatchNorm2d(1)
         
         self.conv3x3 = nn.Conv2d(in_channels = 1,
                                  out_channels = 32,
                                  kernel_size = 3,
                                  padding = 1)
+        self.dropout1 = nn.Dropout(0.5)
+        self.bn3 = nn.BatchNorm2d(32)
         
         self.input_projection = nn.Linear(self.num_frames * 32, 512)
+        self.ln1 = nn.LayerNorm(512)
         
-        self.transEncoder = TransEncoder(d_model=512, n_head=4, dim_ff=512)
-        self.dropout = nn.Dropout(0.25)
+        self.transEncoder = TransEncoder(d_model=512, n_head=4, dim_ff=512, num_layers = 1)
+        self.dropout2 = nn.Dropout(0.25)
         
         #period length prediction
         self.fc1_1 = nn.Linear(512, 512)
+        self.ln2 = nn.LayerNorm(512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
     
     def forward(self, x):
@@ -153,26 +147,38 @@ class RepNet(nn.Module):
         x = self.resnetBase(x)
         x = x.view(batch_size, self.num_frames, x.shape[1],  x.shape[2],  x.shape[3])
         x = x.transpose(1, 2)
-        x = F.relu(self.bn1(self.conv3D(x)))
-        x = self.pool(x).squeeze(3).squeeze(3)
-        final_embs = x
-        x = x.transpose(1, 2)
-        x = self.sims(x)
         
-        x = F.relu(self.conv3x3(x))           #batch, 32, num_frame, num_frame
+        if batch_size > 2 :
+            x = F.relu(self.bn1(self.conv3D(x)))
+        else:
+            x = F.relu(self.conv3D(x))
+        
+        x = self.pool(x).squeeze(3).squeeze(3)
+        x = x.transpose(1, 2)                           #batch, num_frame, 512
+        x = x.reshape(batch_size, self.num_frames, -1)
+        
+        if batch_size > 2:
+            x = F.relu(self.bn2(self.sims(x)))
+            x = F.relu(self.bn3(self.conv3x3(x)))
+        else:
+            x = F.relu(self.sims(x))
+            x = F.relu(self.conv3x3(x))                 #batch, 32, num_frame, num_frame
+        
+        x = self.dropout1(x)
         x = x.view(batch_size, 32*self.num_frames, self.num_frames)
-        x = x.transpose(1, 2)                 #batch, num_frame, 32*num_frame
-        x = F.relu(self.input_projection(x))  #batch, num_frame, d_model=512
-        x = x.transpose(0, 1)                 #num_frame, batch, d_model=512
+        x = x.transpose(1, 2)                           #batch, num_frame, 32*num_frame
+        x = self.ln1(F.relu(self.input_projection(x)))  #batch, num_frame, d_model=512
+        
+        x = x.transpose(0, 1)                          #num_frame, batch, d_model=512
         x = self.transEncoder(x)
         x = x.transpose(0, 1)
-        y = self.dropout(x)
+        y = self.dropout2(x)
         
-        y = F.relu(self.fc1_1(y))
+        y = self.ln2(F.relu(self.fc1_1(y)))
         y = F.relu(self.fc1_2(y))
-        y = y.transpose(1, 2)       #Cross enropy wants (minbatch*classes*dimensions)
+        y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
         
-        return y, final_embs
+        return y
 
 #====================================Symmetric Cross Entropy Loss=====================
 
