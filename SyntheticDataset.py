@@ -391,7 +391,8 @@ class SyntheticDataset(Dataset):
             img = Image.fromarray(frame)
             preprocess = transforms.Compose([
             transforms.Resize((112, 112), 2),
-            transforms.ToTensor()])
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
             img = preprocess(img).unsqueeze(0)
             tensorList.append(img)
         
