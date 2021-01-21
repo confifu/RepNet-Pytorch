@@ -44,8 +44,9 @@ class Sims(nn.Module):
         xr = torch.einsum('bfe,gh->bhfe', (x, I))   #[x, x, x, x ....]
         xc = torch.einsum('bfe,gh->bfhe', (x, I))   #[x x x x ....]
         diff = xr - xc
-        out = -torch.einsum('bfge,bfge->bfg', (diff, diff))
-        out = F.softmax(out, dim = -1)
+        out = torch.einsum('bfge,bfge->bfg', (diff, diff))
+        #uncomment to activate softmax
+        #out = F.softmax(-out, dim = -1)
         return out.unsqueeze(1)
 
 #---------------------------------------------------------------------------
