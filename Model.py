@@ -149,64 +149,34 @@ class RepNet(nn.Module):
         x = x.view(batch_size, self.num_frames, x.shape[1],  x.shape[2],  x.shape[3])
         x = x.transpose(1, 2)
         
-        if batch_size > 2 :
-            x = F.relu(self.bn1(self.conv3D(x)))
-        else:
-            x = F.relu(self.conv3D(x))
-        
+        x = F.relu(self.bn1(self.conv3D(x)))
         x = self.pool(x).squeeze(3).squeeze(3)
         x = x.transpose(1, 2)                           #batch, num_frame, 512
         x = x.reshape(batch_size, self.num_frames, -1)
+       
+        #bn2
+        x = F.relu(self.sims(x))
+        #bn3
+        x = F.relu(self.conv3x3(x))           #batch, 32, num_frame, num_frame
         
-        if batch_size > 2:
-            x = F.relu(self.bn2(self.sims(x)))
-            x = F.relu(self.bn3(self.conv3x3(x)))
-        else:
-            x = F.relu(self.sims(x))
-            x = F.relu(self.conv3x3(x))                 #batch, 32, num_frame, num_frame
-        
-        x = self.dropout1(x)
-        x = x.view(batch_size, 32*self.num_frames, self.num_frames)
-        x = x.transpose(1, 2)                           #batch, num_frame, 32*num_frame
-        x = self.ln1(F.relu(self.input_projection(x)))  #batch, num_frame, d_model=512
+        #dropout1
+        #x = self.dropout1(x)
+        x = x.permute(0, 2, 3, 1)
+        x = x.reshape(batch_size, self.num_frames, -1)  #batch, num_frame, 32*num_frame
+        #ln1
+        x = F.relu(self.input_projection(x))           #batch, num_frame, d_model=512
         
         x = x.transpose(0, 1)                          #num_frame, batch, d_model=512
         x = self.transEncoder(x)
         x = x.transpose(0, 1)
         y = self.dropout2(x)
         
-        y = self.ln2(F.relu(self.fc1_1(y)))
+        #ln2
+        y = F.relu(self.fc1_1(y))
         y = F.relu(self.fc1_2(y))
         y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
         
         return y
-
-#====================================Symmetric Cross Entropy Loss=====================
-
-class SCELoss(torch.nn.Module):
-    def __init__(self, num_classes=10, alpha=1.0, beta=1.0):
-        super(SCELoss, self).__init__()
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.alpha = alpha
-        self.beta = beta
-        self.num_classes = num_classes
-        self.cross_entropy = torch.nn.CrossEntropyLoss()
-
-    def forward(self, pred, labels):
-        # CCE
-        ce = self.cross_entropy(pred, labels)
-
-        # RCE
-        pred = F.softmax(pred, dim=1)
-        pred = torch.clamp(pred, min=1e-7, max=1.0)
-        label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).float().to(self.device)
-        label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0).transpose(1, 2)
-        rce = (-1*torch.sum(pred * torch.log(label_one_hot), dim=1))
-
-        # Loss
-        loss = self.alpha * ce + self.beta * rce.mean()
-        return loss
-
 
 #====================GCE=====================
 
