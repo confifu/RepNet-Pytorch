@@ -46,8 +46,9 @@ class Sims(nn.Module):
         xc = torch.einsum('bfe,gh->bfhe', (x, I))   #[x x x x ....]
         diff = xr - xc
         out = torch.einsum('bfge,bfge->bfg', (diff, diff))
+        out = self.bn(out.unsqueeze(1))
         out = F.softmax(-out/13.544, dim = -1)
-        return out.unsqueeze(1)
+        return out
 
 #---------------------------------------------------------------------------
 
@@ -124,7 +125,7 @@ class RepNet(nn.Module):
                                 kernel_size = 3,
                                 padding = (3,0,0),
                                 dilation = (3,1,1))
-        self.bn1 = nn.BatchNorm1d(512*64*5*5)
+        self.bn1 = nn.BatchNorm3d(512)
         self.pool = nn.MaxPool3d(kernel_size = (1, 5, 5))
         self.sims = Sims()
         
@@ -132,14 +133,16 @@ class RepNet(nn.Module):
                                  out_channels = 32,
                                  kernel_size = 3,
                                  padding = 1)
+        self.bn2 = nn.BatchNorm2d(32)
         
         self.input_projection = nn.Linear(self.num_frames * 32, 512)
-        self.ln = nn.LayerNorm(512)
+        self.ln1 = nn.LayerNorm(512)
         self.transEncoder = TransEncoder(d_model=512, n_head=4, dim_ff=512, num_layers = 1)
         self.dropout = nn.Dropout(0.25)
         
         #period length prediction
         self.fc1_1 = nn.Linear(512, 512)
+        self.ln2 = nn.LayerNorm(512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
     
     def forward(self, x):
@@ -149,26 +152,25 @@ class RepNet(nn.Module):
         x = x.view(batch_size, self.num_frames, x.shape[1],  x.shape[2],  x.shape[3])
         x = x.transpose(1, 2)
         
-        x = F.relu(self.bn1(self.conv3D(x).view(batch_size, -1)))
+        x = F.relu(self.bn1(self.conv3D(x)))
         x = x.view(batch_size, 512, self.num_frames, 5, 5)
         x = self.pool(x).squeeze(3).squeeze(3)
         x = x.transpose(1, 2)                           #batch, num_frame, 512
         x = x.reshape(batch_size, self.num_frames, -1)
        
         x = F.relu(self.sims(x))
-        x = F.relu(self.conv3x3(x))           #batch, 32, num_frame, num_frame
+        x = F.relu(self.bn2(self.conv3x3(x)))           #batch, 32, num_frame, num_frame
         
         x = x.permute(0, 2, 3, 1)
         x = x.reshape(batch_size, self.num_frames, -1)  #batch, num_frame, 32*num_frame
-        x = F.relu(self.input_projection(x))           #batch, num_frame, d_model=512
+        x = self.ln1(F.relu(self.input_projection(x)))           #batch, num_frame, d_model=512
         
         x = x.transpose(0, 1)                          #num_frame, batch, d_model=512
-        x = self.ln(x)
         x = self.transEncoder(x)
         x = x.transpose(0, 1)
         y = self.dropout(x)
         
-        y = F.relu(self.fc1_1(y))
+        y = self.ln2(F.relu(self.fc1_1(y)))
         y = F.relu(self.fc1_2(y))
         y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
         
