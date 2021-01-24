@@ -35,6 +35,7 @@ class Sims(nn.Module):
     def __init__(self):
         super(Sims, self).__init__()
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.bn = nn.BatchNorm2d(1)
         
     def forward(self, x):
         '''(N, S, E)  --> (N, S, S)'''
@@ -45,8 +46,9 @@ class Sims(nn.Module):
         xc = torch.einsum('bfe,gh->bfhe', (x, I))   #[x x x x ....]
         diff = xr - xc
         out = torch.einsum('bfge,bfge->bfg', (diff, diff))
+        out = self.bn(out.unsqueeze(1))
         out = F.softmax(-out/13.544, dim = -1)
-        return out.unsqueeze(1)
+        return 
 
 #---------------------------------------------------------------------------
 
