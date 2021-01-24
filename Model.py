@@ -48,7 +48,7 @@ class Sims(nn.Module):
         out = torch.einsum('bfge,bfge->bfg', (diff, diff))
         out = self.bn(out.unsqueeze(1))
         out = F.softmax(-out/13.544, dim = -1)
-        return 
+        return out
 
 #---------------------------------------------------------------------------
 
