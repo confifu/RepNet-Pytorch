@@ -51,15 +51,21 @@ class Sims(nn.Module):
 #---------------------------------------------------------------------------
 
 class ResNet50Bottom(nn.Module):
-    def __init__(self, original_model):
+    def __init__(self):
         super(ResNet50Bottom, self).__init__()
-        self.rnet=nn.Sequential(*list(original_model.children())[:-4])
-        self.left=nn.Sequential(*list(original_model.children())[-4][:3])
+        self.original_model = torchvision.models.resnet50(pretrained=True, progress=True)
+        self.activation = {}
+        h = self.original_model.layer3[2].register_forward_hook(self.getActivation('comp'))
         
+    def getActivation(self, name):
+        def hook(model, input, output):
+            self.activation[name] = output
+        return hook
+
     def forward(self, x):
-        x = F.relu(self.rnet(x))
-        x = F.relu(self.left(x))
-        return x
+        self.original_model(x)
+        output = self.activation['comp']
+        return output
 
 #---------------------------------------------------------------------------
 
@@ -110,8 +116,7 @@ class RepNet(nn.Module):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         self.num_frames = num_frames
-        resnetbase = torchvision.models.resnet50(pretrained=True, progress=True)
-        self.resnetBase = ResNet50Bottom(resnetbase)
+        self.resnetBase = ResNet50Bottom()
         
         self.conv3D = nn.Conv3d(in_channels = 1024,
                                 out_channels = 512,
