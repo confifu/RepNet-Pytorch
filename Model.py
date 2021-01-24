@@ -134,7 +134,7 @@ class RepNet(nn.Module):
                                  padding = 1)
         
         self.input_projection = nn.Linear(self.num_frames * 32, 512)
-        
+        self.ln = nn.LayerNorm(512)
         self.transEncoder = TransEncoder(d_model=512, n_head=4, dim_ff=512, num_layers = 1)
         self.dropout = nn.Dropout(0.25)
         
@@ -163,6 +163,7 @@ class RepNet(nn.Module):
         x = F.relu(self.input_projection(x))           #batch, num_frame, d_model=512
         
         x = x.transpose(0, 1)                          #num_frame, batch, d_model=512
+        x = self.ln(x)
         x = self.transEncoder(x)
         x = x.transpose(0, 1)
         y = self.dropout(x)
