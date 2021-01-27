@@ -85,7 +85,7 @@ def randomTransform(frames):
     verticalTransParam = getRandomTransformParameter(0.1, 0.0, -0.1)
     #cheap filters
     
-    cbParam = [getRandomTransformParameter(1.0, 0.75, 0.5) for i in range(6)]
+    cbParam = [getRandomTransformParameter(1.1, 1.0, 0.9) for i in range(6)]
     dv = np.random.choice([0, 1], size=(6,))
     dv = [1, 1, 1, 1, 1, 1]
     
