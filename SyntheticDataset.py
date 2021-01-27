@@ -332,11 +332,8 @@ class SyntheticDataset(Dataset):
         period = randint(2 , 31)
         count = np.random.choice([1, randint(2, 64//(period))], p=[0.033, 0.967])
         
-        try:
-            clipDur = randint(min(total//(64/period - count + 1), max(period, 30)), 
+        clipDur = randint(min(total//(64/period - count + 1), max(period, 30)), 
                               min(total//(64/period - count + 1), 60))
-        except:
-            print(period, count, total)
         repDur = count * clipDur
         noRepDur =  int((64 / (period*count) - 1) * repDur)
          
@@ -345,10 +342,7 @@ class SyntheticDataset(Dataset):
         endNoRepDur = noRepDur - begNoRepDur
         totalDur = noRepDur + repDur
         
-        try:
-            startFrame = randint(0, total - (clipDur + noRepDur))         #not taking risks
-        except:
-            print(mirror, period, count, clipDur, repDur, noRepDur, total)
+        startFrame = randint(0, total - (clipDur + noRepDur))
         cap.set(cv2.CAP_PROP_POS_FRAMES, startFrame)
         
         frames = []
@@ -380,13 +374,9 @@ class SyntheticDataset(Dataset):
         assert(len(newFrames) == 64)
         
         tensorList = []
-        
-        
-        try:
-            newFrames = randomTransform(newFrames)
-        except:
-            return self.generateRepVid()
-        
+      
+        newFrames = randomTransform(newFrames)
+          
         for frame in newFrames:
             img = Image.fromarray(frame)
             preprocess = transforms.Compose([
