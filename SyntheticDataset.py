@@ -70,7 +70,7 @@ def randomTransform2(frames):
 def randomTransform(frames):
     
     #resize
-    scaleParams = getRandomTransformParameter(0.2, 0.1, 0.0)
+    scaleParams = getRandomTransformParameter(0.15, 0.1, 0.0)
     #rotate z
     zRotateParams = getRandomTransformParameter(30, 0, -30)
     
@@ -85,7 +85,7 @@ def randomTransform(frames):
     verticalTransParam = getRandomTransformParameter(0.1, 0.0, -0.1)
     #cheap filters
     
-    cbParam = [getRandomTransformParameter(1.0, 0.65, 0.3) for i in range(6)]
+    cbParam = [getRandomTransformParameter(1.0, 0.75, 0.5) for i in range(6)]
     dv = np.random.choice([0, 1], size=(6,))
     dv = [1, 1, 1, 1, 1, 1]
     
