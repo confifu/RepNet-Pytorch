@@ -236,9 +236,13 @@ def translate(image, factorx, factory):
     w = image.shape[1]
     rows = np.any(image, axis=1)
     cols = np.any(image, axis=0)
-    ymin, ymax = np.where(rows)[0][[0, -1]]
-    xmin, xmax = np.where(cols)[0][[0, -1]]
-
+    
+    try:
+        ymin, ymax = np.where(rows)[0][[0, -1]]
+        xmin, xmax = np.where(cols)[0][[0, -1]]
+    except:
+        return image
+    
     hTrans = factorx * w
     xT = max(hTrans, -xmin) if hTrans < 0 else min(hTrans, w - xmax)
 
