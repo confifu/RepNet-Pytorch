@@ -26,46 +26,6 @@ def getRandomTransformParameter(high, mid, low, length=64):
     retarr = np.array(retarr)
     retarr = retarr[::random.choice([-1, 1])]
     return retarr
-
-def randomTransform2(frames):
-    
-    (h, w) = frames[0].shape[:2]
-    ch = h//(4*8)
-     
-    pts2 = np.float32([
-        [w//6, h//6],
-        [w//6, 5*h//6],
-        [5*w//6, h//6],
-        [5*w//6, 5*h//6]
-    ])
-
-    newFrames = []
-    for image in frames:
-        
-        pts1 = np.float32([
-            [randint(0, w//4), randint(0, h//4)],
-            [randint(0, w//4), randint(3*h//4, h)],
-            [randint(3*w//4, w), randint(0, h//4)],
-            [randint(3*w//4, w), randint(3*h//4, h)]
-        ])
-
-        M = cv2.getPerspectiveTransform(pts1, pts2)
-        skewed = cv2.warpPerspective(image, M, (w, h), flags = cv2.INTER_AREA)
-        skewed = skewed[w//8 : 7*w//8, h//8 : 7*h//8, : ]
-        newFrames.append(skewed)
-        
-        '''
-        chvec = np.float32([np.random.choice([randint(0,ch), -randint(0, ch)], size=(2, )),
-                            np.random.choice([randint(0,ch), -randint(0, ch)], size=(2, )),
-                            np.random.choice([randint(0,ch), -randint(0, ch)], size=(2, )),
-                            np.random.choice([randint(0,ch), -randint(0, ch)], size=(2, ))
-                           ])
-        pts1 = pts1 + np.float32(chvec)
-        pts1[pts1 < 0] = 0
-        pts1[pts1 > w] = w
-        '''
-        
-    return newFrames
     
 def randomTransform(frames):
     
