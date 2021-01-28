@@ -47,7 +47,7 @@ def randomTransform(frames):
     
     cbParam = [getRandomTransformParameter(1.05, 1.0, 0.95) for i in range(6)]
     dv = np.random.choice([0, 1], size=(6,))
-    dv = [0, 0, 0, 0, 0, 0]
+    dv = [0, 0, 1, 1, 1, 0]
     
     #rotate z
     if dv[0]:
