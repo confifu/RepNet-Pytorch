@@ -85,7 +85,7 @@ def randomTransform(frames):
     verticalTransParam = getRandomTransformParameter(0.1, 0.0, -0.1)
     #cheap filters
     
-    cbParam = [getRandomTransformParameter(1.1, 1.0, 0.9) for i in range(6)]
+    cbParam = [getRandomTransformParameter(1.05, 1.0, 0.95) for i in range(6)]
     dv = np.random.choice([0, 1], size=(6,))
     dv = [1, 1, 1, 1, 1, 1]
     
@@ -169,7 +169,7 @@ def change_cb(image, lmf, lsf, amf, asf, bmf, bsf):
     # space, being sure to utilize the 8-bit unsigned integer data
     # type
     transfer = cv2.merge([l, a, b])
-    transfer = cv2.cvtColor(transfer.astype("uint8"), cv2.COLOR_LAB2BGR)
+    transfer = cv2.cvtColor(transfer.astype("uint8"), cv2.COLOR_LAB2RGB)
 
     # return the color transferred image
     return transfer
