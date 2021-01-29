@@ -80,7 +80,7 @@ class miniDataset(Dataset):
         X = torch.cat(Xlist)
                           
         y1 = [0 for i in range(0,a)]
-        y1.extend([min(output_len//self.count, 31) if not output_len//self.count == 1 else 0 for i in range(0, output_len)])
+        y1.extend([output_len//self.count if  2 < output_len//self.count < 31 else 0 for i in range(0, output_len)])
         
         y1.extend( [ 0 for i in range(0, b)] )
         y1 = torch.LongTensor(y1)                #periodicity
