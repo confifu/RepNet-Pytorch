@@ -83,7 +83,7 @@ class miniDataset(Dataset):
         y1.extend([output_len//self.count if  1 < output_len//self.count < 32 else 0 for i in range(0, output_len)])
         
         y1.extend( [ 0 for i in range(0, b)] )
-        y1 = torch.LongTensor(y1)                #periodicity
+        y1 = torch.LongTensor(y1).unsqueeze(-1)                #periodicity
         
         y2 = [0 for i in range(0, a)]
         y2.extend([1 for i in range(0, output_len)])
