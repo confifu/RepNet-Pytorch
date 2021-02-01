@@ -144,6 +144,7 @@ class RepNet(nn.Module):
         self.fc1_1 = nn.Linear(512, 512)
         self.ln2 = nn.LayerNorm(512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
+        self.fc1_3 = nn.Linear(self.num_frames//2, 1)
     
     def forward(self, x, ret_sims = False):
         batch_size, _, c, h, w = x.shape
@@ -173,7 +174,8 @@ class RepNet(nn.Module):
         
         y = self.ln2(F.relu(self.fc1_1(y)))
         y = F.relu(self.fc1_2(y))
-        y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
+        y = F.relu(self.fc1_3(y))
+        #y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
         if ret_sims:
             return y, xsim
         return y
