@@ -26,13 +26,13 @@ def getRandomTransformParameter(high, mid, low, length=64):
     retarr = np.array(retarr)
     retarr = retarr[::random.choice([-1, 1])]
     return retarr
-    
+
 def randomTransform(frames):
     
     #resize
-    scaleParams = getRandomTransformParameter(0.15, 0.1, 0.0)
+    scaleParams = getRandomTransformParameter(0.2, 0.1, 0.0)
     #rotate z
-    zRotateParams = getRandomTransformParameter(30, 0, -30)
+    zRotateParams = getRandomTransformParameter(45, 0, -45)
     
     #rotate x
     xRotateParams = getRandomTransformParameter(0.2, 0.0, -0.2, 32)
@@ -45,9 +45,9 @@ def randomTransform(frames):
     verticalTransParam = getRandomTransformParameter(0.1, 0.0, -0.1)
     #cheap filters
     
-    cbParam = [getRandomTransformParameter(1.05, 1.0, 0.95) for i in range(6)]
+    cbParam = [getRandomTransformParameter(1.08, 1.0, 0.92) for i in range(6)]
     dv = np.random.choice([0, 1], size=(6,))
-    dv = [0, 0, 1, 1, 1, 0]
+    dv = [0, 0, 1, 1, 1, 1]
     
     #rotate z
     if dv[0]:
@@ -196,7 +196,6 @@ def translate(image, factorx, factory):
     w = image.shape[1]
     rows = np.any(image, axis=1)
     cols = np.any(image, axis=0)
-    
     try:
         ymin, ymax = np.where(rows)[0][[0, -1]]
         xmin, xmax = np.where(cols)[0][[0, -1]]
@@ -260,12 +259,13 @@ class SyntheticDataset(Dataset):
             if beginNoRepFrames < i < 64 - endNoRepFrames:
                 periodicity[i] = True
                 
-                period = min(max(0, (64 - beginNoRepFrames - endNoRepFrames)//count), 31)
+                period = (64 - beginNoRepFrames - endNoRepFrames)//count
+                period = period if 1< period <32 else 0
                 
                 periodLength[i] = period
                 assert(period < 32)
 
-        periodLength = torch.LongTensor(periodLength).squeeze(1)
+        periodLength = torch.LongTensor(periodLength)
         periodicity = torch.BoolTensor(periodicity)
         return X, periodLength, periodicity, index
     
@@ -297,7 +297,8 @@ class SyntheticDataset(Dataset):
         count = np.random.choice([1, randint(2, 64//(period))], p=[0.033, 0.967])
         
         clipDur = randint(min(total//(64/period - count + 1), max(period, 30)), 
-                              min(total//(64/period - count + 1), 60))
+                          min(total//(64/period - count + 1), 60))
+
         repDur = count * clipDur
         noRepDur =  int((64 / (period*count) - 1) * repDur)
          
@@ -305,7 +306,7 @@ class SyntheticDataset(Dataset):
         begNoRepDur = randint(0,  noRepDur)
         endNoRepDur = noRepDur - begNoRepDur
         totalDur = noRepDur + repDur
-        
+            
         startFrame = randint(0, total - (clipDur + noRepDur))
         cap.set(cv2.CAP_PROP_POS_FRAMES, startFrame)
         
@@ -339,13 +340,13 @@ class SyntheticDataset(Dataset):
         
         tensorList = []
       
-        newFrames = randomTransform(newFrames)
-          
+        newFrames = randomTransform(newFrames)      
         for frame in newFrames:
             img = Image.fromarray(frame)
             preprocess = transforms.Compose([
             transforms.Resize((112, 112), 2),
             transforms.ToTensor(),
+            transforms.ColorJitter(brightness=0.02, contrast=0.05, saturation=0.05, hue=0),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
             img = preprocess(img).unsqueeze(0)
             tensorList.append(img)
