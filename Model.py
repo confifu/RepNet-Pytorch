@@ -10,7 +10,7 @@ def MAE(y, ypred) :
     """for period"""
     batch_size = y.shape[0]
     yarr = y.clone().detach().cpu().numpy()
-    ypredarr = ypred.clone().detach().cpu().numpy().argmax(1)
+    ypredarr = ypred.clone().detach().cpu().numpy()
     
     ae = np.sum(np.absolute(yarr - ypredarr))
     mae = ae / yarr.flatten().shape[0]
@@ -47,7 +47,8 @@ class Sims(nn.Module):
         xc = torch.einsum('bfe,h->bfhe', (x, I))   #[x x x x ....]     =>  xc[:,:,0,:] == x
         diff = xr - xc
         out = torch.einsum('bfge,bfge->bfg', (diff, diff))
-        out = self.bn(out.unsqueeze(1))
+        out = out.unsqueeze(1)
+        #out = self.bn(out)
         out = F.softmax(-out/13.544, dim = -1)
         return out
 
@@ -87,23 +88,24 @@ class PositionalEncoding(nn.Module):
 
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
-        return self.dropout(x)
+        x = self.dropout(x)
+        return x 
 
 #----------------------------------------------------------------------------
 
 class TransEncoder(nn.Module):
     def __init__(self, d_model, n_head, dim_ff, dropout=0.0, num_layers = 1):
         super(TransEncoder, self).__init__()
-        
         self.pos_encoder = PositionalEncoding(d_model, 0.1, 64)
-        encoder_layer = nn.TransformerEncoderLayer(d_model = d_model,           
+        
+        encoder_layer = nn.TransformerEncoderLayer(d_model = d_model,
                                                     nhead = n_head,
                                                     dim_feedforward = dim_ff,
-                                                    dropout = 0.0,
+                                                    dropout = dropout,
                                                     activation = 'relu')
-        
-        self.trans_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
-        
+        encoder_norm = nn.LayerNorm(d_model)
+        self.trans_encoder = nn.TransformerEncoder(encoder_layer, num_layers, encoder_norm)
+                
     def forward(self, src):
         src = self.pos_encoder(src)
         e_op = self.trans_encoder(src)
@@ -121,14 +123,16 @@ class RepNet(nn.Module):
         self.num_frames = num_frames
         self.resnetBase = ResNet50Bottom()
         
+        
         self.conv3D = nn.Conv3d(in_channels = 1024,
                                 out_channels = 512,
                                 kernel_size = 3,
-                                padding = (3,0,0),
+                                padding = (3,1,1),
                                 dilation = (3,1,1))
         self.bn1 = nn.BatchNorm3d(512)
-        self.pool = nn.MaxPool3d(kernel_size = (1, 5, 5))
+        self.pool = nn.MaxPool3d(kernel_size = (1, 7, 7))
         self.sims = Sims()
+        
         
         self.conv3x3 = nn.Conv2d(in_channels = 1,
                                  out_channels = 32,
@@ -136,18 +140,25 @@ class RepNet(nn.Module):
                                  padding = 1)
         
         self.bn2 = nn.BatchNorm2d(32)
+        self.dropout1 = nn.Dropout(0.25)
         self.input_projection = nn.Linear(self.num_frames * 32, 512)
         self.ln1 = nn.LayerNorm(512)
         
-        self.transEncoder = TransEncoder(d_model=512, n_head=4, dim_ff=512, num_layers = 1)
+        self.transEncoder = TransEncoder(d_model=512, n_head=4, dropout = 0.2, dim_ff=512, num_layers = 2)
         
         #period length prediction
         self.fc1_1 = nn.Linear(512, 512)
-        self.dropout1 = nn.Dropout(0.25)
         self.ln2 = nn.LayerNorm(512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
         self.fc1_3 = nn.Linear(self.num_frames//2, 1)
     
+    def getPeriodicity(self, periodLength):
+        periodicity = torch.nn.functional.threshold(periodLength, 2, 0)
+        periodicity = -torch.nn.functional.threshold(-periodicity, -1, -1)
+        return periodicity
+        
+        
+        
     def forward(self, x, ret_sims = False):
         batch_size, _, c, h, w = x.shape
         x = x.view(-1, c, h, w)
@@ -155,66 +166,95 @@ class RepNet(nn.Module):
         x = x.view(batch_size, self.num_frames, x.shape[1],  x.shape[2],  x.shape[3])
         x = x.transpose(1, 2)
         x = F.relu(self.bn1(self.conv3D(x)))
-        
-        x = x.view(batch_size, 512, self.num_frames, 5, 5) 
+                        
+        x = x.view(batch_size, 512, self.num_frames, 7, 7)
         x = self.pool(x).squeeze(3).squeeze(3)
         x = x.transpose(1, 2)                           #batch, num_frame, 512
         x = x.reshape(batch_size, self.num_frames, -1)
 
         x = F.relu(self.sims(x))
         xret = x
-        #bn3
+        
         x = F.relu(self.bn2(self.conv3x3(x)))     #batch, 32, num_frame, num_frame
+        #print(x.shape)
+        x = self.dropout1(x)
 
         x = x.permute(0, 2, 3, 1)
         x = x.reshape(batch_size, self.num_frames, -1)  #batch, num_frame, 32*num_frame
-        #ln1
         x = self.ln1(F.relu(self.input_projection(x)))  #batch, num_frame, d_model=512
         
         x = x.transpose(0, 1)                          #num_frame, batch, d_model=512
-        
         x = self.transEncoder(x)
-        x = x.transpose(0, 1)
+        y = x.transpose(0, 1)
         
-        #ln2
-        y = F.relu(self.ln2(self.fc1_1(x)))
-        y = self.dropout1(y)
+        
+        y = F.relu(self.ln2(self.fc1_1(y)))
         y = F.relu(self.fc1_2(y))
-        y = F.relu(self.fc1_3(y))
-        #y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
+        y = F.relu(self.fc1_3(y))    
         
+        #y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
         if ret_sims:
-            return y, xsim
+            return y, xret
         return y
 
-#====================GCE=====================
+    
+#=============== Atrous COnvs ============================================================================
+class ASPPConv(nn.Sequential):
+    def __init__(self, in_channels, out_channels, dilation):
+        modules = [
+            nn.Conv3d(in_channels, out_channels, 3, padding=(dilation, 1, 1), dilation=(dilation, 1, 1), bias=False),
+            nn.BatchNorm3d(out_channels),
+            nn.ReLU()
+        ]
+        super(ASPPConv, self).__init__(*modules)
 
-class TruncatedLoss(nn.Module):
 
-    def __init__(self, q=0.7, k=0.5, trainset_size=50000):
-        super(TruncatedLoss, self).__init__()
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.q = q
-        self.k = k
-        self.weight = torch.nn.Parameter(data=torch.ones(trainset_size, 1), requires_grad=False).to(self.device)
-             
-    def forward(self, logits, targets, indexes):
-        p = F.softmax(logits, dim=1)
-        Yg = torch.gather(p, 1, torch.unsqueeze(targets, 1)).to(self.device)
+class ASPPPooling(nn.Sequential):
+    def __init__(self, in_channels, out_channels):
+        super(ASPPPooling, self).__init__(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels, out_channels, 1, bias=False),
+            #nn.BatchNorm2d(out_channels),
+            nn.ReLU())
 
-        loss = ((1-(Yg**self.q))/self.q)*self.weight[indexes] - ((1-(self.k**self.q))/self.q)*self.weight[indexes]
-        loss = torch.mean(loss)
+    def forward(self, x):
+        size = x.shape[-2:]
+        for mod in self:
+            x = mod(x)
+        return F.interpolate(x, size=size, mode='bilinear', align_corners=False)
 
-        return loss
 
-    def update_weight(self, logits, targets, indexes):
-        p = F.softmax(logits, dim=1)
-        Yg = torch.gather(p, 1, torch.unsqueeze(targets, 1))
-        Lq = ((1-(Yg**self.q))/self.q)
-        Lqk = np.repeat(((1-(self.k**self.q))/self.q), targets.size(0))
-        Lqk = torch.from_numpy(Lqk).type(torch.cuda.FloatTensor)
-        Lqk = torch.unsqueeze(Lqk, 1)
-        
+class ASPP(nn.Module):
+    def __init__(self, in_channels, atrous_rates, out_channels=256):
+        super(ASPP, self).__init__()
+        modules = []
+        modules.append(nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, 1, bias=False),
+            nn.BatchNorm3d(out_channels),
+            nn.ReLU()))
 
-        condition = torch.gt(Lqk, Lq)
-        self.weight[indexes] = condition.type(torch.cuda.FloatTensor)
+        rates = tuple(atrous_rates)
+        for rate in rates:
+            modules.append(ASPPConv(in_channels, out_channels, rate))
+
+        #modules.append(ASPPPooling(in_channels, out_channels))
+
+        self.convs = nn.ModuleList(modules)
+
+        self.project = nn.Sequential(
+            nn.Conv3d(len(self.convs) * out_channels, out_channels, 1, bias=False),
+            nn.BatchNorm3d(out_channels),
+            nn.ReLU(),
+            nn.Dropout(0.5))
+
+    def forward(self, x):
+        res = []
+        for conv in self.convs:
+            res.append(conv(x))
+            #print(res[-1].shape)
+        #print(res[0].shape)
+        res = torch.cat(res, dim=1)
+        #print(res.shape)
+        return self.project(res)
+    
+    
