@@ -55,42 +55,42 @@ class miniDataset(Dataset):
         a = randint(0, 64 - output_len)
         b = 64 - output_len - a
         
-        
-        randpath = random.choice(glob.glob('drive/MyDrive/PR_Repnet/synthvids/train*.mp4'))
+        randpath = random.choice(glob.glob('synthvids/train*.mp4'))
         randFrames = self.getFrames(randpath)
         newRandFrames = []
         for i in range(1, a + b + 1):
             newRandFrames.append(randFrames[i * len(randFrames)//(a+b)  - 1])
 
         
-        finalFrames = newRandFrames[:a]
-        finalFrames.extend( newFrames )        
-        finalFrames.extend( newRandFrames[a:] )
-        
+        same = np.random.choice([0, 1], p = [0.5, 0.5])
+        if same:
+            finalFrames = [newFrames[0] for i in range(a)]
+            finalFrames.extend( newFrames )        
+            finalFrames.extend([newFrames[-1] for i in range(b)] )
+        else:
+            finalFrames = newRandFrames[:a]
+            finalFrames.extend( newFrames )        
+            finalFrames.extend( newRandFrames[a:] )
+
         Xlist = []
         for img in finalFrames:
         
             preprocess = transforms.Compose([
-            transforms.Resize((112, 112), 2),
+            transforms.Resize((112, 112)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
             frameTensor = preprocess(img).unsqueeze(0)
             Xlist.append(frameTensor)
         
+        Xlist = [Xlist[i] if a<i<(64-b) else torch.nn.functional.dropout(Xlist[i], 0.2) for i in range(64)]  
         X = torch.cat(Xlist)
-                          
-        y1 = [0 for i in range(0,a)]
-        y1.extend([output_len//self.count if  1 < output_len//self.count < 32 else 0 for i in range(0, output_len)])
+        y = [0 for i in range(0,a)]
+        y.extend([output_len/self.count if 1<output_len/self.count<32 else 0 for i in range(0, output_len)])
         
-        y1.extend( [ 0 for i in range(0, b)] )
-        y1 = torch.LongTensor(y1).unsqueeze(-1)                #periodicity
+        y.extend( [ 0 for i in range(0, b)] )
+        y = torch.FloatTensor(y).unsqueeze(-1)
         
-        y2 = [0 for i in range(0, a)]
-        y2.extend([1 for i in range(0, output_len)])
-        y2.extend([0 for i in range(0, b)])
-        y2 = torch.BoolTensor(y2).unsqueeze(-1)                #periodicity
-        
-        return X, y1, y2
+        return X, y
         
     def __len__(self):
         return 1
@@ -106,14 +106,14 @@ class dataset_with_indices(Dataset):
         self.ds = ds
 
     def __getitem__(self, index):
-        X, y1, y2 = self.ds[index]
-        return X, y1, y2, index
+        X, y = self.ds[index]
+        return X, y, index
     
     def getPeriodDist(self):
         arr = np.zeros(32,)
         
         for i in tqdm(range(self.__len__())):
-            _, p,_,_ = self.__getitem__(i)
+            _, p,_ = self.__getitem__(i)
             per = max(p)
             arr[per] += 1
         return arr
@@ -122,7 +122,7 @@ class dataset_with_indices(Dataset):
         return len(self.ds)
 
 
-def getCombinedDataset2(dfPath, videoDir, videoPrefix):
+def getCombinedDataset(dfPath, videoDir, videoPrefix):
     df = pd.read_csv(dfPath)
     path_prefix = videoDir + '/' + videoPrefix
     
