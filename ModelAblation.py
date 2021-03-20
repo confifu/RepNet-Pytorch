@@ -183,7 +183,7 @@ class RepNet(nn.Module):
         xret = x
         
         x = self.fcsim(x)
-        x = torch.unsqueeze(1)
+        x = x.unsqueeze(1)
         
         x = F.relu(self.bn2(self.conv3x3(x)))     #batch, 32, num_frame, num_frame
         #print(x.shape)
