@@ -129,14 +129,6 @@ def training_loop(n_epochs,
                 optimizer.zero_grad()
                 loss.backward()
                 
-                '''
-                clear_output(wait=True)
-                plt.figure(figsize=(25,5))
-                plt.cla()
-                plot_grad_flow(model.named_parameters())
-                plt.show()
-                '''
-                
                 optimizer.step()
                 train_loss = loss.item()
                 trainLosses.append(train_loss)
@@ -200,7 +192,7 @@ def training_loop(n_epochs,
                 'valLosses' : valLosses
             }
             torch.save(checkpoint, 
-                       'checkpoint/' + ckpt_name + str(epoch) + '.pt')
+                       'drive/MyDrive/PR_Repnet/' + ckpt_name + str(epoch) + '.pt')
         
         lr_scheduler.step()
         
