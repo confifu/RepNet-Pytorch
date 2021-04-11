@@ -41,7 +41,7 @@ class Sims(nn.Module):
         self.bn = nn.BatchNorm2d(1)
 
         convs = []
-        for i in range(6):
+        for i in range(5):
             convs.append(nn.Sequential(nn.Conv2d(in_channels = 1,
                                                   out_channels = 1,
                                                   kernel_size = 3,
@@ -143,11 +143,11 @@ class RepNet(nn.Module):
         
         
         self.conv3D = nn.Conv3d(in_channels = 1024,
-                                out_channels = 512,
+                                out_channels = 256,
                                 kernel_size = 3,
                                 padding = (3,1,1),
                                 dilation = (3,1,1))
-        self.bn1 = nn.BatchNorm3d(512)
+        self.bn1 = nn.BatchNorm3d(256)
         self.pool = nn.MaxPool3d(kernel_size = (1, 7, 7))
         self.sims = Sims()
         
@@ -186,7 +186,7 @@ class RepNet(nn.Module):
         x = x.transpose(1, 2)
         x = F.relu(self.bn1(self.conv3D(x)))
                         
-        x = x.view(batch_size, 512, self.num_frames, 7, 7)
+        x = x.view(batch_size, 256, self.num_frames, 7, 7)
         x = self.pool(x).squeeze(3).squeeze(3)
         x = x.transpose(1, 2)                           #batch, num_frame, 512
         x = x.reshape(batch_size, self.num_frames, -1)
