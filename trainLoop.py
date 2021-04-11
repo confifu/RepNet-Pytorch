@@ -3,7 +3,7 @@ import math
 import time
 import torch
 import numpy as np
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 from torch.utils.data import DataLoader, ConcatDataset
 from IPython.display import clear_output
 
