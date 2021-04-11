@@ -41,7 +41,7 @@ class Sims(nn.Module):
         self.bn = nn.BatchNorm2d(1)
 
         convs = []
-        for i in range(5):
+        for i in range(6):
             convs.append(nn.Sequential(nn.Conv2d(in_channels = 1,
                                                   out_channels = 1,
                                                   kernel_size = 3,
