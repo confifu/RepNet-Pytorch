@@ -64,6 +64,7 @@ class Sims(nn.Module):
         x = x.unsqueeze(1)
         for conv in self.convs:
             x = conv(x)
+            print(x.shape)
 
         x = x.reshape(b, 1, f, f)
         #out = self.bn(out)
