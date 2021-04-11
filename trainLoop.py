@@ -7,10 +7,7 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader, ConcatDataset
 from IPython.display import clear_output
 
-
-from Model_inn2 import MAE, f1score
 from Dataset import getCombinedDataset
-
 from SyntheticDataset import SyntheticDataset
 
 use_cuda = torch.cuda.is_available()
@@ -18,6 +15,33 @@ device = torch.device("cuda" if use_cuda else "cpu")
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+
+#============metrics ==================
+def MAE(y, ypred) :
+    """for period"""
+    batch_size = y.shape[0]
+    yarr = y.clone().detach().cpu().numpy()
+    ypredarr = ypred.clone().detach().cpu().numpy()
+    
+    ae = np.sum(np.absolute(yarr - ypredarr))
+    mae = ae / yarr.flatten().shape[0]
+    return mae
+
+def f1score(y, ypred) :
+    """for periodicity"""
+    batch_size = y.shape[0]
+    yarr = y.clone().detach().cpu().numpy()
+    ypredarr = ypred.clone().detach().cpu().numpy().astype(bool)
+    tp = np.logical_and(yarr, ypredarr).sum()
+    precision = tp / (ypredarr.sum() + 1e-6)
+    recall = tp / (yarr.sum() + 1e-6)
+    if precision + recall == 0:
+        fscore = 0
+    else :
+        fscore = 2*precision*recall/(precision + recall)
+    return fscore
+
+
 
 def running_mean(x, N):
     cumsum = np.cumsum(np.insert(x, 0, 0)) 
