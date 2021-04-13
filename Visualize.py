@@ -7,7 +7,7 @@ from torchvision import transforms
 
 
 use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:0" if use_cuda else "cpu")
+device = torch.device("cuda" if use_cuda else "cpu")
 
 def predRep(vidPath, model, numdivs = 1):
     countbest=[]
@@ -85,10 +85,10 @@ def predSmall(frames, model):
     #print(X.shape)
     with torch.no_grad():
         model.eval()
-        y1pred, sim = model(X.unsqueeze(0).to(device), True)
+        y1pred, y2pred, sim = model(X.unsqueeze(0).to(device), True)
     
     periodLength = y1pred.round().long()
-    periodicity = periodLength >= 2
+    periodicity = y2pred > 0
     #print(periodLength.squeeze())
     #print(periodicity.squeeze())
     
@@ -126,12 +126,16 @@ def getAnim(X, countPred = None, count = None, idx = None):
     
     return anim
 
-def getCount(period):
+def getCount(period, periodicity = None):
     period = period.round().squeeze()
 
     count = []
-    periodicity = period > 2
-    
+
+    if periodicity is None:
+        periodicity = period > 2
+    else :
+        periodicity = periodicity.squeeze() > 0
+
     numofReps = 0
     for i in range(len(period)):
         if period[i] == 0:
