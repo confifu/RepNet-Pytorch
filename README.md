@@ -1,5 +1,5 @@
 # RepNet-Pytorch
-Temporal repetition counitng. This repo contains code for the model as mentioned in <a href= "https://arxiv.org/abs/2006.15418"> Counting Out Time</a>. There might be some differences to the version of the paper. There also is a modified version that is part of my college project in `model_inn.py`.
+Temporal repetition counting. This repo contains code for the model as mentioned in <a href= "https://arxiv.org/abs/2006.15418"> Counting Out Time</a>. There might be some differences to the version of the paper. There also is a modified version that is part of my college project in `model_inn.py`.
 
 I have used different loss functions to train the model becuase I got better results with them.
 
