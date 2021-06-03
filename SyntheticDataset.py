@@ -77,7 +77,7 @@ class SyntheticDataset(Dataset):
 
         X, periodLength, period = self.generateRepVid()
         
-        return X, periodLength, index
+        return X, periodLength
     
     def getPeriodDist(self, samples):
         arr = np.zeros(32,)
