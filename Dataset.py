@@ -140,5 +140,5 @@ def getCombinedDataset(dfPath, videoDir, videoPrefix):
         path_to_video = path_prefix + str(dfi.index.item()) +'.mp4'
         miniDatasetList.append(miniDataset(dfi, path_to_video))
         
-    megaDataset = dataset_with_indices(ConcatDataset(miniDatasetList))
+    megaDataset = ConcatDataset(miniDatasetList)
     return megaDataset
