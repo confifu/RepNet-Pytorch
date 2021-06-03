@@ -5,31 +5,6 @@ import torch.nn.functional as F
 import math, base64, io, os, time, cv2
 import numpy as np
 
-#============metrics ==================
-def MAE(y, ypred) :
-    """for period"""
-    batch_size = y.shape[0]
-    yarr = y.clone().detach().cpu().numpy()
-    ypredarr = ypred.clone().detach().cpu().numpy()
-    
-    ae = np.sum(np.absolute(yarr - ypredarr))
-    mae = ae / yarr.flatten().shape[0]
-    return mae
-
-def f1score(y, ypred) :
-    """for periodicity"""
-    batch_size = y.shape[0]
-    yarr = y.clone().detach().cpu().numpy()
-    ypredarr = ypred.clone().detach().cpu().numpy().astype(bool)
-    tp = np.logical_and(yarr, ypredarr).sum()
-    precision = tp / (ypredarr.sum() + 1e-6)
-    recall = tp / (yarr.sum() + 1e-6)
-    if precision + recall == 0:
-        fscore = 0
-    else :
-        fscore = 2*precision*recall/(precision + recall)
-    return fscore
-
 #============classes===================
 
 class Sims(nn.Module):
@@ -131,8 +106,8 @@ class RepNet(nn.Module):
                                 dilation = (3,1,1))
         self.bn1 = nn.BatchNorm3d(512)
         self.pool = nn.MaxPool3d(kernel_size = (1, 7, 7))
-        self.sims = Sims()
         
+        self.sims = Sims()
         
         self.conv3x3 = nn.Conv2d(in_channels = 1,
                                  out_channels = 32,
@@ -144,21 +119,22 @@ class RepNet(nn.Module):
         self.input_projection = nn.Linear(self.num_frames * 32, 512)
         self.ln1 = nn.LayerNorm(512)
         
-        self.transEncoder = TransEncoder(d_model=512, n_head=4, dropout = 0.2, dim_ff=512, num_layers = 2)
+        self.transEncoder1 = TransEncoder(d_model=512, n_head=4, dropout = 0.2, dim_ff=512, num_layers = 1)
+        self.transEncoder2 = TransEncoder(d_model=512, n_head=4, dropout = 0.2, dim_ff=512, num_layers = 1)
         
         #period length prediction
         self.fc1_1 = nn.Linear(512, 512)
-        self.ln2 = nn.LayerNorm(512)
+        self.ln1_2 = nn.LayerNorm(512)
         self.fc1_2 = nn.Linear(512, self.num_frames//2)
         self.fc1_3 = nn.Linear(self.num_frames//2, 1)
-    
-    def getPeriodicity(self, periodLength):
-        periodicity = torch.nn.functional.threshold(periodLength, 2, 0)
-        periodicity = -torch.nn.functional.threshold(-periodicity, -1, -1)
-        return periodicity
-        
-        
-        
+
+
+        #periodicity prediction
+        self.fc2_1 = nn.Linear(512, 512)
+        self.ln2_2 = nn.LayerNorm(512)
+        self.fc2_2 = nn.Linear(512, self.num_frames//2)
+        self.fc2_3 = nn.Linear(self.num_frames//2, 1)
+
     def forward(self, x, ret_sims = False):
         batch_size, _, c, h, w = x.shape
         x = x.view(-1, c, h, w)
@@ -184,77 +160,22 @@ class RepNet(nn.Module):
         x = self.ln1(F.relu(self.input_projection(x)))  #batch, num_frame, d_model=512
         
         x = x.transpose(0, 1)                          #num_frame, batch, d_model=512
-        x = self.transEncoder(x)
-        y = x.transpose(0, 1)
         
+        #period
+        x1 = self.transEncoder1(x)
+        y1 = x1.transpose(0, 1)
+        y1 = F.relu(self.ln1_2(self.fc1_1(y1)))
+        y1 = F.relu(self.fc1_2(y1))
+        y1 = F.relu(self.fc1_3(y1))
+
+        #periodicity
+        x2 = self.transEncoder2(x)
+        y2 = x2.transpose(0, 1)
+        y2 = F.relu(self.ln2_2(self.fc2_1(y2)))
+        y2 = F.relu(self.fc2_2(y2))
+        y2 = F.relu(self.fc2_3(y2)) 
         
-        y = F.relu(self.ln2(self.fc1_1(y)))
-        y = F.relu(self.fc1_2(y))
-        y = F.relu(self.fc1_3(y))    
-        
-        #y = y.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
+        #y1 = y1.transpose(1, 2)                         #Cross enropy wants (minbatch*classes*dimensions)
         if ret_sims:
-            return y, xret
-        return y
-
-    
-#=============== Atrous COnvs ============================================================================
-class ASPPConv(nn.Sequential):
-    def __init__(self, in_channels, out_channels, dilation):
-        modules = [
-            nn.Conv3d(in_channels, out_channels, 3, padding=(dilation, 1, 1), dilation=(dilation, 1, 1), bias=False),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU()
-        ]
-        super(ASPPConv, self).__init__(*modules)
-
-
-class ASPPPooling(nn.Sequential):
-    def __init__(self, in_channels, out_channels):
-        super(ASPPPooling, self).__init__(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels, out_channels, 1, bias=False),
-            #nn.BatchNorm2d(out_channels),
-            nn.ReLU())
-
-    def forward(self, x):
-        size = x.shape[-2:]
-        for mod in self:
-            x = mod(x)
-        return F.interpolate(x, size=size, mode='bilinear', align_corners=False)
-
-
-class ASPP(nn.Module):
-    def __init__(self, in_channels, atrous_rates, out_channels=256):
-        super(ASPP, self).__init__()
-        modules = []
-        modules.append(nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, 1, bias=False),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU()))
-
-        rates = tuple(atrous_rates)
-        for rate in rates:
-            modules.append(ASPPConv(in_channels, out_channels, rate))
-
-        #modules.append(ASPPPooling(in_channels, out_channels))
-
-        self.convs = nn.ModuleList(modules)
-
-        self.project = nn.Sequential(
-            nn.Conv3d(len(self.convs) * out_channels, out_channels, 1, bias=False),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(),
-            nn.Dropout(0.5))
-
-    def forward(self, x):
-        res = []
-        for conv in self.convs:
-            res.append(conv(x))
-            #print(res[-1].shape)
-        #print(res[0].shape)
-        res = torch.cat(res, dim=1)
-        #print(res.shape)
-        return self.project(res)
-    
-    
+            return y1, y2, xret
+        return y1, y2
