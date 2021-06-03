@@ -7,9 +7,10 @@ Also I created a synthetic dataset for this task using Blender and it seems to w
 
 All the dataset videos are at <a href="https://drive.google.com/drive/folders/1G3BdsyzUK6KjGRV0k5w_yBbmebq-l6tZ?usp=sharing">this</a> directory.
 
+Sample result:
+
+![sampleresult](skipping.gif)
+
 Features created using self similarity and multi headed attention respectively:
 
 ![figure](features.png)
-
-Sample result:
-![sampleresult](skipping.gif)
