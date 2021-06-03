@@ -14,3 +14,4 @@ Sample result:
 Features created using self similarity and multi headed attention respectively:
 
 ![figure](features.png)
+![figure2](features2.png)
